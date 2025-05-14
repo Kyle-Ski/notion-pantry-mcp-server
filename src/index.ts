@@ -3,9 +3,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 // Import Pantry-specific resources and tools (TODO: work on these resources)
 import { registerPantryResources } from "./resources/pantryResources";
-import { registerMealTools } from "./tools/mealTools";
+import { registerPantryTools } from "./tools/pantryTools";
 import { NotionPantryService } from "./services/notionPantryService";
-import { DurableObjectNamespace } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 
 // Environment variables
 export interface Env {
@@ -20,9 +20,8 @@ type State = {
     lastUpdated: string;
 };
 
-// Our main MCP agent class
 export class PantryMcpServer extends McpAgent<Env, State> {
-    // Create an MCP server
+    
     server = new McpServer({
         name: "Pantry MCP Server",
         version: "0.1.0",
@@ -45,11 +44,9 @@ export class PantryMcpServer extends McpAgent<Env, State> {
             true // useDummyData flag - set to true for now
         );
 
-        // TODO: Register resources (context providers)
-        // registerPantryResources(this.server, notionService);
+        registerPantryResources(this.server, notionService);
 
-        // TODO: Register tools
-        // registerMealTools(this.server, notionService);
+        registerPantryTools(this.server, notionService);
 
         console.log("Pantry MCP Agent initialized successfully");
     }
@@ -57,5 +54,5 @@ export class PantryMcpServer extends McpAgent<Env, State> {
 
 // Export the mount function for the Durable Object
 export default {
-    fetch: PantryMcpServer.mount("/mcp", { binding: "PantryMcpAgent" })
+    fetch: PantryMcpServer.mount("/mcp", { binding: "PantryMcpServer" })
 };

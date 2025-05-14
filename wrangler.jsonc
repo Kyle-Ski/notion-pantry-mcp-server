@@ -9,7 +9,7 @@
     "durable_objects": {
         "bindings": [
             {
-                "name": "PANTRY_MCP",
+                "name": "PantryMcpServer",
                 "class_name": "PantryMcpServer"
             }
         ]
