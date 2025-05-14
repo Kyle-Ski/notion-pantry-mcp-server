@@ -53,6 +53,4 @@ export class PantryMcpServer extends McpAgent<Env, State> {
 }
 
 // Export the mount function for the Durable Object
-export default {
-    fetch: PantryMcpServer.mount("/mcp", { binding: "PantryMcpServer" })
-};
+export default PantryMcpServer.mount("/mcp", { binding: "PantryMcpServer" })
