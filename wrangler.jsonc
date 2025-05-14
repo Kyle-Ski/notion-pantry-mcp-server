@@ -1,0 +1,25 @@
+{
+    "name": "pantry-mcp-server",
+    "main": "src/index.ts",
+    "compatibility_date": "2025-05-14",
+    "compatibility_flags": [
+        "nodejs_compat",
+        "nodejs_compat_populate_process_env"
+    ],
+    "durable_objects": {
+        "bindings": [
+            {
+                "name": "PANTRY_MCP",
+                "class_name": "PantryMcpServer"
+            }
+        ]
+    },
+    "migrations": [
+        {
+            "tag": "v1",
+            "new_sqlite_classes": [
+                "PantryMcpServer"
+            ]
+        }
+    ]
+}
