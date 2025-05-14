@@ -18,8 +18,10 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.0.3",
+    "@notionhq/client": "^3.0.1",
     "agents": "^0.0.62",
     "ai": "^4.3.9",
+    "dotenv": "^16.5.0",
     "fs": "^0.0.1-security",
     "node-fetch": "^3.3.2",
     "zod": "^3.24.3"
