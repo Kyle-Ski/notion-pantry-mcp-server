@@ -130,3 +130,46 @@ export function updatePantryAfterCooking(recipe: RecipeWithIngredients, pantry: 
 
     return updatedPantry;
 }
+
+/**
+ * Parse ingredients from text to structured format
+ */
+export function parseIngredients(ingredientsText: string, recipeId: string = ''): RecipeIngredient[] {
+    if (!ingredientsText) return [];
+
+    const lines = ingredientsText.split('\n');
+    const ingredients: RecipeIngredient[] = [];
+
+    for (const line of lines) {
+        // Simple regex to extract quantity, unit, and name
+        // This is a basic implementation, will need to be more robust in production
+        const match = line.match(/^([\d.\/]+)\s+(\w+)\s+(.+?)(?:\s*\((.+)\))?$/);
+
+        if (match) {
+            const [_, quantityStr, unit, name, preparation] = match;
+            const quantity = parseFloat(eval(quantityStr.replace('/', '/')));
+
+            ingredients.push({
+                recipeId,
+                name: name.trim(),
+                quantity,
+                unit: unit.trim(),
+                preparation: preparation?.trim(),
+                isOptional: line.toLowerCase().includes('optional')
+            });
+        } else {
+            // If the line doesn't match our pattern, just add it as a name
+            if (line.trim()) {
+                ingredients.push({
+                    recipeId,
+                    name: line.trim(),
+                    quantity: 0,
+                    unit: 'whole',
+                    isOptional: line.toLowerCase().includes('optional')
+                });
+            }
+        }
+    }
+
+    return ingredients;
+}

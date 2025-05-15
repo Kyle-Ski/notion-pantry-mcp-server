@@ -12,6 +12,8 @@ export interface Env {
     PantryMcpServer: DurableObjectNamespace; // Durable Object for our agent
     NOTION_TOKEN: string;                   // Notion API token
     NOTION_PANTRY_DB: string;               // Notion database ID for pantry
+    NOTION_RECIPES_DB: string;              // Notion database ID for Recipes
+    NOTION_SHOPPING_LIST_DB: string;        // Notion database ID for Shopping List 
 }
 
 // Simple state structure for our agent
@@ -41,7 +43,9 @@ export class PantryMcpServer extends McpAgent<Env, State> {
         const notionService = new NotionPantryService(
             this.env.NOTION_TOKEN,
             this.env.NOTION_PANTRY_DB,
-            true // useDummyData flag - set to true for now
+            this.env.NOTION_RECIPES_DB,
+            this.env.NOTION_SHOPPING_LIST_DB,
+            false // useDummyData flag - set to true for now
         );
 
         registerPantryResources(this.server, notionService);
