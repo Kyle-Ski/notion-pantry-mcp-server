@@ -36,8 +36,28 @@ export class NotionPantryService {
     // ====== PANTRY METHODS ======
 
     /**
- * Get all pantry items
- */
+     * Delete a shopping list item
+     */
+    async deleteShoppingListItem(id: string): Promise<void> {
+        if (this.useDummyData) {
+            console.log(`[DUMMY] Deleted shopping list item: ${id}`);
+            return;
+        }
+
+        try {
+            await this.notion.pages.update({
+                page_id: id,
+                archived: true
+            });
+        } catch (error) {
+            console.error(`Error deleting shopping list item ${id}:`, error);
+            throw new Error(`Failed to delete shopping list item ${id}`);
+        }
+    }
+
+    /**
+    * Get all pantry items
+    */
     async getPantryItems(): Promise<PantryItem[]> {
         if (this.useDummyData) {
             return this.getDummyPantryItems();

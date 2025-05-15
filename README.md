@@ -101,12 +101,17 @@ The server provides the following tools for LLMs to interact with your pantry sy
 |------|-------------|--------------|
 | `getPantryInfo` | View comprehensive information about your pantry inventory | • Complete item listing with quantities<br>• Expiring items within the next week<br>• Staples running low<br>• Category distribution<br>• Notion page links |
 | `getPantryAndRecipes` | Get pantry inventory and recipes for meal planning | • Current pantry inventory<br>• Recipe details with ingredients<br>• Recipe tags and tried status<br>• Recipe source links |
-| `updatePantryAfterCooking` | Update pantry after preparing a meal | • Auto-decrease used ingredients<br>• Add depleted staples to shopping list<br>• Mark recipes as tried<br>• Detailed change report |
-| `addPantryItem` | Add or update pantry items | • Quantity, unit, category tracking<br>• Expiry date management<br>• Staple item flagging<br>• Smart duplicate handling |
+| `updatePantryItems` | Update quantities of multiple pantry items at once | • Batch update/add multiple items<br>• Support for both adding and removing quantities<br>• Automatically adds new items if needed<br>• Detailed before/after report |
+| `updatePantryAfterCooking` | Update pantry after preparing a meal | • Update via recipe ID or ingredient list<br>• Auto-decrease used ingredients<br>• Add depleted staples to shopping list<br>• Mark recipes as tried<br>• Detailed change report |
+| `updatePantryWithUsedItems` | Update pantry by removing ingredients you've used | • Direct quantity reduction for ad-hoc cooking<br>• Tracks items not found in pantry<br>• Adds staples to shopping list when low<br>• Provides before/after comparison |
+| `addPantryItem` | Add or update pantry items | • Quantity, unit, category tracking<br>• Expiry date management<br>• Staple item flagging with auto-calculated minimums<br>• Smart duplicate handling |
 | `getShoppingList` | View current shopping list | • Items organized by category<br>• Purchase status tracking<br>• Priority levels<br>• Auto-added vs manual items |
 | `addToShoppingList` | Add items to shopping list | • Quantity, unit, category tracking<br>• Priority assignment<br>• Smart duplicate handling |
 | `markItemAsPurchased` | Mark shopping list items as purchased | • Update purchase status<br>• Prepare for pantry transfer |
-| `addPurchasedItemsToPantry` | Transfer purchased items to pantry | • Bulk transfer of purchased items<br>• Update existing pantry quantities<br>• Remove from shopping list |
+| `addPurchasedItemsToPantry` | Transfer purchased items to pantry | • Bulk transfer of purchased items<br>• Update existing pantry quantities<br>• Remove from shopping list<br>• Optional detailed summary |
+| `removeExpiredItems` | Remove expired items from pantry | • Optional custom expiry date check<br>• Add staples to shopping list<br>"Dry run" mode for checking without removing<br>• Detailed expiry report |
+| `convertCookingUnits` | Convert between different cooking units | • Support for volume and weight conversions<br>• Ingredient-specific conversions<br>• Handles unit aliases<br>• Multi-step conversions |
+| `getCookingEquivalents` | Get common cooking equivalents | • Volume conversion tables<br>• Weight conversion tables<br>• Ingredient-specific equivalents |
 
 ## Example Usage
 Here are some examples of how to interact with the MCP server:

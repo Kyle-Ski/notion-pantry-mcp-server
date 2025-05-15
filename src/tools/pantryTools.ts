@@ -190,91 +190,240 @@ export function registerPantryTools(
     )
 
     /**
+     * Updates multiple pantry items
+     */
+    server.tool(
+        "updatePantryItems",
+        "Update quantities of multiple pantry items at once",
+        {
+            items: z.array(z.object({
+                name: z.string().describe("Name of the item"),
+                quantity: z.number().describe("Quantity to add (positive) or remove (negative)"),
+                unit: z.string().describe("Unit of measurement")
+            })).describe("List of items to update")
+        },
+        async ({ items }) => {
+            try {
+                const results: any[] = [];
+
+                for (const item of items) {
+                    // Find existing item
+                    const pantryItems = await notionService.getPantryItems();
+                    const existingItem = pantryItems.find(i =>
+                        i.name.toLowerCase() === item.name.toLowerCase());
+
+                    if (existingItem) {
+                        // Calculate new quantity (can be addition or subtraction)
+                        const newQuantity = Math.max(0, existingItem.quantity + item.quantity);
+
+                        // Update the item
+                        const updatedItem = await notionService.updatePantryItem(existingItem.id, {
+                            quantity: newQuantity
+                        });
+
+                        results.push({
+                            name: item.name,
+                            previousQuantity: existingItem.quantity,
+                            change: item.quantity,
+                            newQuantity: updatedItem.quantity,
+                            unit: updatedItem.unit
+                        });
+                    } else if (item.quantity > 0) {
+                        // If item doesn't exist and we're adding (not subtracting)
+                        const newItem = await notionService.addPantryItem({
+                            name: item.name,
+                            quantity: item.quantity,
+                            unit: item.unit,
+                            category: "Other", // Default category
+                            location: "Pantry", // Default location
+                            isStaple: false
+                        });
+
+                        results.push({
+                            name: item.name,
+                            previousQuantity: 0,
+                            change: item.quantity,
+                            newQuantity: newItem.quantity,
+                            unit: newItem.unit
+                        });
+                    }
+                }
+
+                return {
+                    content: [{
+                        type: "text",
+                        text: `# Pantry Items Updated\n\nHere are the details of the updates. You can format this information for the user.\n\n${JSON.stringify(results, null, 2)}`
+                    }]
+                };
+            } catch (error: any) {
+                console.error("Error updating pantry items:", error);
+                return {
+                    content: [{ type: "text", text: `Error updating pantry: ${error.message}` }]
+                };
+            }
+        }
+    );
+
+    /**
      * Tool: Update pantry after cooking a recipe
      */
     server.tool(
         "updatePantryAfterCooking",
         "Update pantry inventory after preparing a meal",
         {
-            recipeId: z.string().describe("ID of the recipe used for the meal"),
+            recipeId: z.string().optional().describe("ID of the recipe used for the meal"),
+            ingredients: z.array(z.object({
+                name: z.string().describe("Name of the ingredient"),
+                quantity: z.number().describe("Quantity used"),
+                unit: z.string().describe("Unit of measurement")
+            })).optional().describe("Manual list of ingredients used (if not using a recipe)"),
             addToShoppingList: z.boolean().optional().default(true).describe("Automatically add low/depleted items to shopping list")
         },
-        async ({ recipeId, addToShoppingList }) => {
+        async ({ recipeId, ingredients, addToShoppingList }) => {
             try {
-                // Get recipe details
-                const recipeWithIngredients = await notionService.getRecipeWithIngredients(recipeId);
+                // If recipeId is provided, use existing logic
+                if (recipeId) {
+                    // Get recipe with ingredients
+                    const recipeWithIngredients = await notionService.getRecipeWithIngredients(recipeId);
 
-                if (!recipeWithIngredients) {
+                    if (!recipeWithIngredients) {
+                        return {
+                            content: [{
+                                type: "text",
+                                text: `Recipe with ID ${recipeId} not found.`
+                            }]
+                        };
+                    }
+
+                    // Get pantry before update
+                    const pantryBefore = await notionService.getPantryItems();
+
+                    // Update the pantry
+                    await notionService.updatePantryForRecipe(recipeId);
+
+                    // Get pantry after update
+                    const pantryAfter = await notionService.getPantryItems();
+
+                    // Calculate changes
+                    const changes: any[] = [];
+                    const addedToShoppingList: any[] = [];
+
+                    recipeWithIngredients.ingredients.forEach(ingredient => {
+                        if (ingredient.isOptional) return;
+
+                        const before = pantryBefore.find(item => item.name.toLowerCase() === ingredient.name.toLowerCase());
+                        const after = pantryAfter.find(item => item.name.toLowerCase() === ingredient.name.toLowerCase());
+
+                        if (before && after) {
+                            changes.push({
+                                name: ingredient.name,
+                                before: before.quantity,
+                                after: after.quantity,
+                                unit: before.unit
+                            });
+
+                            if (addToShoppingList && before.isStaple && before.minQuantity !== undefined &&
+                                before.quantity > before.minQuantity &&
+                                after.quantity <= before.minQuantity) {
+                                addedToShoppingList.push(ingredient.name);
+                            }
+                        }
+                    });
+
+                    // Update recipe tried status if not tried before
+                    let triedStatusUpdated = false;
+                    if (!recipeWithIngredients.recipe.tried) {
+                        try {
+                            await notionService.markRecipeAsTried(recipeId);
+                            triedStatusUpdated = true;
+                        } catch (error) {
+                            console.error("Error marking recipe as tried:", error);
+                        }
+                    }
+
+                    // Return data for LLM to format
                     return {
                         content: [{
                             type: "text",
-                            text: `Recipe with ID ${recipeId} not found.`
+                            text: `# Pantry Update Results\n\nHere are the results of updating your pantry after cooking. You can format this information for the user.\n\n${JSON.stringify({
+                                recipe: {
+                                    id: recipeWithIngredients.recipe.id,
+                                    name: recipeWithIngredients.recipe.name,
+                                    notionUrl: recipeWithIngredients.recipe.notionUrl,
+                                    triedStatusUpdated
+                                },
+                                changes,
+                                addedToShoppingList
+                            }, null, 2)}`
                         }]
                     };
                 }
+                // If ingredients list is provided, use those directly
+                else if (ingredients && ingredients.length > 0) {
+                    const changes = [];
+                    const addedToShoppingList = [];
 
-                // Get pantry before update
-                const pantryBefore = await notionService.getPantryItems();
+                    // Get pantry before update
+                    const pantryBefore = await notionService.getPantryItems();
 
-                // Update the pantry
-                await notionService.updatePantryForRecipe(recipeId);
+                    for (const ingredient of ingredients) {
+                        // Find matching pantry item
+                        const pantryItem = pantryBefore.find(item =>
+                            item.name.toLowerCase() === ingredient.name.toLowerCase());
 
-                // Get pantry after update
-                const pantryAfter = await notionService.getPantryItems();
+                        if (pantryItem) {
+                            // Calculate new quantity
+                            const newQuantity = Math.max(0, pantryItem.quantity - ingredient.quantity);
 
-                // Calculate changes
-                const changes: any[] = [];
-                const addedToShoppingList: any[] = [];
+                            // Update the item
+                            await notionService.updatePantryItem(pantryItem.id, {
+                                quantity: newQuantity
+                            });
 
-                recipeWithIngredients.ingredients.forEach(ingredient => {
-                    if (ingredient.isOptional) return;
+                            changes.push({
+                                name: ingredient.name,
+                                before: pantryItem.quantity,
+                                after: newQuantity,
+                                unit: pantryItem.unit
+                            });
 
-                    const before = pantryBefore.find(item => item.name.toLowerCase() === ingredient.name.toLowerCase());
-                    const after = pantryAfter.find(item => item.name.toLowerCase() === ingredient.name.toLowerCase());
+                            // Add to shopping list if needed
+                            if (addToShoppingList && pantryItem.isStaple && pantryItem.minQuantity !== undefined &&
+                                pantryItem.quantity > pantryItem.minQuantity &&
+                                newQuantity <= pantryItem.minQuantity) {
+                                await notionService.addToShoppingList({
+                                    name: pantryItem.name,
+                                    quantity: pantryItem.minQuantity,
+                                    unit: pantryItem.unit,
+                                    category: pantryItem.category,
+                                    priority: "Medium",
+                                    isPurchased: false,
+                                    isAutoAdded: true
+                                });
 
-                    if (before && after) {
-                        changes.push({
-                            name: ingredient.name,
-                            before: before.quantity,
-                            after: after.quantity,
-                            unit: before.unit
-                        });
-
-                        if (addToShoppingList && before.isStaple && before.minQuantity !== undefined &&
-                            before.quantity > before.minQuantity &&
-                            after.quantity <= before.minQuantity) {
-                            addedToShoppingList.push(ingredient.name);
+                                addedToShoppingList.push(ingredient.name);
+                            }
                         }
                     }
-                });
 
-                // Update recipe tried status if not tried before
-                let triedStatusUpdated = false;
-                if (!recipeWithIngredients.recipe.tried) {
-                    try {
-                        await notionService.markRecipeAsTried(recipeId);
-                        triedStatusUpdated = true;
-                    } catch (error) {
-                        console.error("Error marking recipe as tried:", error);
-                    }
+                    // Return results
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `# Pantry Update Results\n\nHere are the results of updating your pantry after cooking. You can format this information for the user.\n\n${JSON.stringify({
+                                changes,
+                                addedToShoppingList
+                            }, null, 2)}`
+                        }]
+                    };
+                } else {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: "Error: Either a recipe ID or a list of ingredients must be provided."
+                        }]
+                    };
                 }
-
-                // Return data for LLM to format
-                return {
-                    content: [{
-                        type: "text",
-                        text: `# Pantry Update Results\n\nHere are the results of updating your pantry after cooking. You can format this information for the user.\n\n${JSON.stringify({
-                            recipe: {
-                                id: recipeWithIngredients.recipe.id,
-                                name: recipeWithIngredients.recipe.name,
-                                notionUrl: recipeWithIngredients.recipe.notionUrl,
-                                triedStatusUpdated
-                            },
-                            changes,
-                            addedToShoppingList
-                        }, null, 2)}`
-                    }]
-                };
             } catch (error: any) {
                 console.error("Error in updatePantryAfterCooking:", error);
                 return {
@@ -502,22 +651,79 @@ export function registerPantryTools(
     server.tool(
         "addPurchasedItemsToPantry",
         "Add all purchased items to pantry and remove from shopping list",
-        {},
-        async () => {
+        {
+            provideSummary: z.boolean().optional().default(true).describe("Whether to provide a detailed summary of changes")
+        },
+        async ({ provideSummary }) => {
             try {
                 // Get purchased items before they're removed
                 const shoppingList = await notionService.getShoppingList();
                 const purchasedItems = shoppingList.filter(item => item.isPurchased);
 
-                // Add purchased items to pantry
-                await notionService.addPurchasedItemsToPantry();
+                if (purchasedItems.length === 0) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: "No purchased items found on your shopping list."
+                        }]
+                    };
+                }
 
-                // Return data for LLM to format
+                // Track pantry changes for summary
+                const changes = [];
+
+                // Add purchased items to pantry
+                for (const item of purchasedItems) {
+                    // Check if this item already exists in pantry
+                    const pantryItems = await notionService.getPantryItems();
+                    const existingItem = pantryItems.find(pantryItem =>
+                        pantryItem.name.toLowerCase() === item.name.toLowerCase());
+
+                    let result;
+                    if (existingItem) {
+                        // Update existing item quantity
+                        const beforeQuantity = existingItem.quantity;
+                        result = await notionService.updatePantryItem(existingItem.id, {
+                            quantity: existingItem.quantity + item.quantity
+                        });
+
+                        changes.push({
+                            name: item.name,
+                            action: "updated",
+                            before: beforeQuantity,
+                            after: result.quantity,
+                            unit: item.unit
+                        });
+                    } else {
+                        // Add as new pantry item
+                        result = await notionService.addPantryItem({
+                            name: item.name,
+                            quantity: item.quantity,
+                            unit: item.unit,
+                            category: item.category,
+                            location: 'Pantry', // Default location
+                            isStaple: false,
+                            notes: item.notes
+                        });
+
+                        changes.push({
+                            name: item.name,
+                            action: "added",
+                            quantity: item.quantity,
+                            unit: item.unit
+                        });
+                    }
+
+                    // Remove from shopping list
+                    await notionService.deleteShoppingListItem(item.id);
+                }
+
+                // Return data for LLM to format with change details
                 return {
                     content: [{
                         type: "text",
                         text: `# Purchased Items Added to Pantry\n\nHere are the details of the operation. You can format this information for the user.\n\n${JSON.stringify({
-                            itemsAddedToPantry: purchasedItems,
+                            itemsAddedToPantry: provideSummary ? changes : purchasedItems.map(i => i.name),
                             count: purchasedItems.length
                         }, null, 2)}`
                     }]
@@ -528,6 +734,184 @@ export function registerPantryTools(
                     content: [{
                         type: "text",
                         text: `Error adding purchased items to pantry: ${error.message}`
+                    }]
+                };
+            }
+        }
+    );
+
+    // A more flexible tool for updating pantry items without requiring a recipe
+    server.tool(
+        "updatePantryWithUsedItems",
+        "Update pantry by removing ingredients you've used",
+        {
+            items: z.array(z.object({
+                name: z.string().describe("Name of the item used"),
+                quantity: z.number().describe("Quantity used"),
+                unit: z.string().describe("Unit of measurement")
+            })).describe("List of items used"),
+            addToShoppingList: z.boolean().optional().default(true).describe("Add low/depleted staples to shopping list")
+        },
+        async ({ items, addToShoppingList }) => {
+            try {
+                const changes = [];
+                const addedToShoppingList = [];
+                const notFoundItems = [];
+
+                // Get pantry items once to avoid repeated calls
+                const pantryItems = await notionService.getPantryItems();
+
+                for (const item of items) {
+                    // Find matching pantry item
+                    const pantryItem = pantryItems.find(p =>
+                        p.name.toLowerCase() === item.name.toLowerCase());
+
+                    if (pantryItem) {
+                        // Calculate new quantity
+                        const newQuantity = Math.max(0, pantryItem.quantity - item.quantity);
+
+                        // Update the item
+                        await notionService.updatePantryItem(pantryItem.id, {
+                            quantity: newQuantity
+                        });
+
+                        changes.push({
+                            name: item.name,
+                            before: pantryItem.quantity,
+                            after: newQuantity,
+                            unit: pantryItem.unit,
+                            used: item.quantity
+                        });
+
+                        // Add to shopping list if needed
+                        if (addToShoppingList && pantryItem.isStaple && pantryItem.minQuantity !== undefined &&
+                            pantryItem.quantity > pantryItem.minQuantity &&
+                            newQuantity <= pantryItem.minQuantity) {
+                            await notionService.addToShoppingList({
+                                name: pantryItem.name,
+                                quantity: pantryItem.minQuantity || 1,
+                                unit: pantryItem.unit,
+                                category: pantryItem.category,
+                                priority: "Medium",
+                                isPurchased: false,
+                                isAutoAdded: true
+                            });
+
+                            addedToShoppingList.push(pantryItem.name);
+                        }
+                    } else {
+                        notFoundItems.push(item.name);
+                    }
+                }
+
+                // Return results
+                return {
+                    content: [{
+                        type: "text",
+                        text: `# Pantry Updated with Used Items\n\nHere are the details of the update. You can format this information for the user.\n\n${JSON.stringify({
+                            changes,
+                            addedToShoppingList,
+                            notFoundItems
+                        }, null, 2)}`
+                    }]
+                };
+            } catch (error: any) {
+                console.error("Error updating pantry with used items:", error);
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Error updating pantry: ${error.message}`
+                    }]
+                };
+            }
+        }
+    );
+
+    server.tool(
+        "removeExpiredItems",
+        "Remove expired items from pantry and optionally add replacements to shopping list",
+        {
+            checkExpiryBefore: z.string().optional().describe("Check items expiring before this date (YYYY-MM-DD), defaults to today"),
+            addToShoppingList: z.boolean().optional().default(true).describe("Add staple items to shopping list"),
+            dryRun: z.boolean().optional().default(false).describe("Just report expired items without removing them")
+        },
+        async ({ checkExpiryBefore, addToShoppingList, dryRun }) => {
+            try {
+                const expiryDate = checkExpiryBefore ? new Date(checkExpiryBefore) : new Date();
+
+                // Get all pantry items
+                const pantryItems = await notionService.getPantryItems();
+
+                // Find expired items
+                const expiredItems = pantryItems.filter(item => {
+                    if (!item.expiryDate) return false;
+                    const itemExpiry = new Date(item.expiryDate);
+                    return itemExpiry <= expiryDate;
+                });
+
+                if (expiredItems.length === 0) {
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `No items found expiring before ${expiryDate.toISOString().split('T')[0]}.`
+                        }]
+                    };
+                }
+
+                const removedItems = [];
+                const addedToShoppingList = [];
+
+                // Process expired items
+                for (const item of expiredItems) {
+                    // Add to shopping list if it's a staple
+                    if (addToShoppingList && item.isStaple) {
+                        if (!dryRun) {
+                            await notionService.addToShoppingList({
+                                name: item.name,
+                                quantity: item.minQuantity || item.quantity,
+                                unit: item.unit,
+                                category: item.category,
+                                priority: "High",
+                                isPurchased: false,
+                                isAutoAdded: true,
+                                notes: "Replacing expired item"
+                            });
+                        }
+                        addedToShoppingList.push(item.name);
+                    }
+
+                    // Remove from pantry
+                    if (!dryRun) {
+                        await notionService.deletePantryItem(item.id);
+                    }
+
+                    removedItems.push({
+                        name: item.name,
+                        quantity: item.quantity,
+                        unit: item.unit,
+                        expiryDate: item.expiryDate,
+                        daysExpired: Math.ceil((expiryDate.getTime() - new Date(item.expiryDate!).getTime()) / (1000 * 60 * 60 * 24))
+                    });
+                }
+
+                // Return results
+                return {
+                    content: [{
+                        type: "text",
+                        text: `# ${dryRun ? 'Expired Items Report' : 'Expired Items Removed'}\n\nHere are the details of the ${dryRun ? 'expired items' : 'removal operation'}. You can format this information for the user.\n\n${JSON.stringify({
+                            removedItems,
+                            addedToShoppingList,
+                            totalRemoved: removedItems.length,
+                            dryRun
+                        }, null, 2)}`
+                    }]
+                };
+            } catch (error: any) {
+                console.error("Error handling expired items:", error);
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Error handling expired items: ${error.message}`
                     }]
                 };
             }
