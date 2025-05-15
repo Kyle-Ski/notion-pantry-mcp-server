@@ -201,7 +201,6 @@ This project adapts to your existing recipe database structure, typically using:
 
 ## Known Limitations
 
-* Currently, recipe ingredients aren't stored in Notion - they're generated based on recipe name and tags
 * Expiration dates, notes, and tags aren't fully utilized in all operations
 * New categories might be created that don't match existing database categories
 
