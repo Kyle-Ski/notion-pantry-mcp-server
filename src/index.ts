@@ -6,6 +6,7 @@ import { registerPantryResources } from "./resources/pantryResources";
 import { registerPantryTools } from "./tools/pantryTools";
 import { NotionPantryService } from "./services/notionPantryService";
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
+import { registerUnitConversionTools } from "./tools/unitConversionTools";
 
 // Environment variables
 export interface Env {
@@ -51,6 +52,8 @@ export class PantryMcpServer extends McpAgent<Env, State> {
         registerPantryResources(this.server, notionService);
 
         registerPantryTools(this.server, notionService);
+
+        registerUnitConversionTools(this.server);
 
         console.log("Pantry MCP Agent initialized successfully");
     }
