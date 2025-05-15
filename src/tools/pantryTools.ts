@@ -162,160 +162,75 @@ export function registerPantryTools(
      * Tool: Suggest meals based on available pantry ingredients
      */
     server.tool(
-        "suggestMeals",
-        "Suggest meals based on available pantry ingredients",
+        "getPantryAndRecipes",
+        "Get pantry inventory and available recipes for meal planning",
         {
-            maxResults: z.number().optional().default(5).describe("Maximum number of meal suggestions to return"),
-            filterByTag: z.string().optional().describe("Filter recipes by a specific tag (e.g., 'Breakfast', 'Easy')"),
-            includeTriedOnly: z.boolean().optional().default(false).describe("Only include recipes you've tried before"),
-            includeMissingIngredients: z.boolean().optional().default(true).describe("Include information about missing ingredients")
+          filterByTag: z.string().optional().describe("Filter recipes by a specific tag (e.g., 'Breakfast', 'Easy')"),
+          includeTriedOnly: z.boolean().optional().default(false).describe("Only include recipes you've tried before"),
+          maxRecipes: z.number().optional().default(10).describe("Maximum number of recipes to return")
         },
-        async ({ maxResults, filterByTag, includeTriedOnly, includeMissingIngredients }) => {
-            try {
-                // Get pantry items
-                const pantryItems = await notionService.getPantryItems();
-
-                // Get recipe suggestions
-                let recipesWithIngredients = await notionService.getRecipesWithIngredients();
-
-                // Apply filters
-                if (filterByTag) {
-                    recipesWithIngredients = recipesWithIngredients.filter(r =>
-                        r.recipe.tags.includes(filterByTag)
-                    );
-                }
-
-                if (includeTriedOnly) {
-                    recipesWithIngredients = recipesWithIngredients.filter(r => r.recipe.tried);
-                }
-
-                // Calculate which ones we can make with current ingredients
-                const recipeSuggestions = recipesWithIngredients.map(recipe => {
-                    const canMake = canMakeRecipe(recipe, pantryItems);
-                    const missingIngredients = getMissingIngredients(recipe, pantryItems);
-
-                    return {
-                        recipe,
-                        canMake,
-                        missingIngredients,
-                        matchScore: canMake ? 100 : Math.round(
-                            ((recipe.ingredients.length - missingIngredients.length) / recipe.ingredients.length) * 100
-                        )
-                    };
-                });
-
-                // Sort by match score (best matches first)
-                recipeSuggestions.sort((a, b) => b.matchScore - a.matchScore);
-
-                // Limit results
-                const limitedSuggestions = recipeSuggestions.slice(0, maxResults);
-
-                // Generate the response
-                let response = `# Meal Suggestions Based on Your Pantry\n\n`;
-
-                if (limitedSuggestions.length === 0) {
-                    response = "No meal suggestions available based on your current pantry items and filter criteria.";
-
-                    // Provide some helpful tips
-                    if (filterByTag || includeTriedOnly) {
-                        response += "\n\nTry removing some filters to see more suggestions.";
-                    }
-
-                    return {
-                        content: [{ type: "text", text: response }]
-                    };
-                }
-
-                // Add a summary
-                response += `Found ${limitedSuggestions.length} recipe suggestions based on your current pantry.\n\n`;
-
-                // List the recipes
-                limitedSuggestions.forEach((suggestion, index) => {
-                    const { recipe, canMake, missingIngredients, matchScore } = suggestion;
-
-                    // Recipe header with match score
-                    response += `## ${index + 1}. ${recipe.recipe.name} (${matchScore}% match)\n`;
-
-                    // Add status
-                    if (canMake) {
-                        response += `**Status:** ✅ You have all required ingredients!\n`;
-                    } else {
-                        response += `**Status:** ⚠️ Missing some ingredients\n`;
-                    }
-
-                    // Recipe details
-                    if (recipe.recipe.tags.length > 0) {
-                        response += `**Tags:** ${recipe.recipe.tags.join(', ')}\n`;
-                    }
-
-                    if (recipe.recipe.tried) {
-                        response += `**Tried Before:** Yes\n`;
-                    } else {
-                        response += `**Tried Before:** No\n`;
-                    }
-
-                    if (recipe.recipe.link) {
-                        response += `**Recipe Link:** [View Recipe](${recipe.recipe.link})\n`;
-                    }
-
-                    response += `\n`;
-
-                    // Ingredients section
-                    response += `### Ingredients\n`;
-
-                    recipe.ingredients.forEach(ingredient => {
-                        // Check if we have this ingredient
-                        const pantryItem = pantryItems.find(item =>
-                            item.name.toLowerCase() === ingredient.name.toLowerCase()
-                        );
-
-                        const haveEnough = pantryItem && pantryItem.quantity >= ingredient.quantity;
-                        const statusEmoji = ingredient.isOptional ? "📎" : (haveEnough ? "✅" : "❌");
-
-                        // Format the ingredient
-                        let ingredientText = `${statusEmoji} ${ingredient.name}: ${ingredient.quantity} ${ingredient.unit}`;
-
-                        if (pantryItem) {
-                            ingredientText += ` (you have ${pantryItem.quantity} ${pantryItem.unit})`;
-                        } else if (!ingredient.isOptional) {
-                            ingredientText += ` (missing)`;
-                        }
-
-                        if (ingredient.isOptional) {
-                            ingredientText += ` (optional)`;
-                        }
-
-                        response += `- ${ingredientText}\n`;
-                    });
-
-                    response += `\n`;
-
-                    // Missing ingredients section
-                    if (includeMissingIngredients && missingIngredients.length > 0) {
-                        response += `### Missing Ingredients\n`;
-
-                        missingIngredients.forEach(missing => {
-                            response += `- ${missing.name}: need ${missing.need} ${missing.unit}, have ${missing.have} ${missing.unit}\n`;
-                        });
-
-                        response += `\n`;
-                    }
-                });
-
-                // Add a legend
-                response += `*Legend: ✅ = Have ingredient, ❌ = Missing ingredient, 📎 = Optional ingredient*\n`;
-
-                return {
-                    content: [{ type: "text", text: response }]
-                };
-            } catch (error: any) {
-                console.error("Error in suggestMeals:", error);
-                return {
-                    content: [{ type: "text", text: `Error generating meal suggestions: ${error.message}` }]
-                };
+        async ({ filterByTag, includeTriedOnly, maxRecipes }) => {
+          try {
+            // Get pantry items
+            const pantryItems = await notionService.getPantryItems();
+            
+            // Get recipes with ingredients
+            let recipesWithIngredients = await notionService.getRecipesWithIngredients();
+            
+            // Apply filters
+            if (filterByTag) {
+              recipesWithIngredients = recipesWithIngredients.filter(r => 
+                r.recipe.tags.includes(filterByTag)
+              );
             }
+            
+            if (includeTriedOnly) {
+              recipesWithIngredients = recipesWithIngredients.filter(r => r.recipe.tried);
+            }
+            
+            // Limit the number of recipes to avoid overwhelming the LLM
+            recipesWithIngredients = recipesWithIngredients.slice(0, maxRecipes);
+            
+            // Format the data for the LLM to process
+            const response = {
+              pantry: pantryItems.map(item => ({
+                name: item.name,
+                quantity: item.quantity,
+                unit: item.unit,
+                category: item.category,
+                expiry: item.expiryDate
+              })),
+              
+              recipes: recipesWithIngredients.map(r => ({
+                id: r.recipe.id,
+                name: r.recipe.name,
+                tried: r.recipe.tried,
+                tags: r.recipe.tags,
+                link: r.recipe.link,
+                ingredients: r.ingredients.map(ing => ({
+                  name: ing.name,
+                  quantity: ing.quantity,
+                  unit: ing.unit,
+                  optional: ing.isOptional
+                }))
+              }))
+            };
+            
+            // Return structured data for the LLM to reason about
+            return {
+              content: [{ 
+                type: "text", 
+                text: `# Pantry and Recipe Data\n\nHere is the current pantry inventory and available recipes. You can analyze this data to suggest meals that can be made with available ingredients.\n\n${JSON.stringify(response, null, 2)}` 
+              }]
+            };
+          } catch (error: any) {
+            console.error("Error in getPantryAndRecipes:", error);
+            return {
+              content: [{ type: "text", text: `Error retrieving pantry and recipe data: ${error.message}` }]
+            };
+          }
         }
-    );
+      )
 
     /**
      * Tool: Update pantry after cooking a recipe

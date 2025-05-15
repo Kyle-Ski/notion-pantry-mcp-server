@@ -283,7 +283,6 @@ export class NotionPantryService {
 
     /**
      * Get recipes with ingredients
-     * Note: This is using dummy ingredient data since we don't have ingredients in your recipe DB
      */
     async getRecipesWithIngredients(): Promise<RecipeWithIngredients[]> {
         // Get recipes
@@ -295,7 +294,7 @@ export class NotionPantryService {
             // For now, we'll use dummy ingredients
             const ingredients = this.useDummyData
                 ? this.getDummyIngredientsForRecipe(recipe.id)
-                : await this.generateIngredientsFromRecipeName(recipe.name);
+                : await this.generateIngredientsFromRecipeName(recipe.name, recipe.tags);
 
             return {
                 recipe,
@@ -315,12 +314,51 @@ export class NotionPantryService {
         // Get ingredients
         const ingredients = this.useDummyData
             ? this.getDummyIngredientsForRecipe(recipeId)
-            : await this.generateIngredientsFromRecipeName(recipe.name);
+            : await this.generateIngredientsFromRecipeName(recipe.name, recipe.tags);
 
         return {
             recipe,
             ingredients
         };
+    }
+
+    /**
+    * Mark a recipe as tried
+    */
+    async markRecipeAsTried(recipeId: string): Promise<Recipe | null> {
+        if (this.useDummyData) {
+            const recipes = this.getDummyRecipes();
+            const recipeIndex = recipes.findIndex(r => r.id === recipeId);
+            if (recipeIndex === -1) return null;
+
+            const updatedRecipe = { ...recipes[recipeIndex], tried: true };
+            console.log(`[DUMMY] Marked recipe as tried: ${updatedRecipe.name}`);
+            return updatedRecipe;
+        }
+
+        try {
+            const recipe = await this.getRecipeById(recipeId);
+            if (!recipe) return null;
+
+            // Only update if not already tried
+            if (!recipe.tried) {
+                const response = await this.notion.pages.update({
+                    page_id: recipeId,
+                    properties: {
+                        'Tried?': {
+                            checkbox: true
+                        }
+                    }
+                });
+
+                return notionPageToRecipe(response);
+            }
+
+            return recipe;
+        } catch (error) {
+            console.error(`Error marking recipe ${recipeId} as tried:`, error);
+            return null;
+        }
     }
 
     /**
@@ -776,31 +814,150 @@ export class NotionPantryService {
     }
 
     /**
-     * Generate dummy ingredients based on recipe name 
-     * In a real implementation, we would parse this from recipe content
+     * Generate ingredients based on recipe name and tags
+     * This creates consistent ingredients for the same recipe each time
      */
-    private async generateIngredientsFromRecipeName(recipeName: string): Promise<RecipeIngredient[]> {
-        // This is a very basic placeholder implementation
-        // In a real scenario, you'd have a proper ingredients database or parse recipe text
-        const pantryItems = await this.getPantryItems();
-        const randomIngredients: RecipeIngredient[] = [];
+    private async generateIngredientsFromRecipeName(recipeName: string, recipeTags: string[] = []): Promise<RecipeIngredient[]> {
+        const ingredients: RecipeIngredient[] = [];
 
-        // Pick 3-5 random ingredients from pantry
-        const numIngredients = Math.floor(Math.random() * 3) + 3;
-        const shuffledItems = [...pantryItems].sort(() => 0.5 - Math.random());
+        // Common ingredients based on recipe types
+        const breakfastIngredients = [
+            { name: "Eggs", quantity: 2, unit: "count" },
+            { name: "Milk", quantity: 1, unit: "cup" },
+            { name: "Bread", quantity: 2, unit: "slices" },
+            { name: "Butter", quantity: 1, unit: "tablespoon" }
+        ];
 
-        for (let i = 0; i < Math.min(numIngredients, shuffledItems.length); i++) {
-            const item = shuffledItems[i];
-            randomIngredients.push({
-                recipeId: 'unknown',
-                name: item.name,
-                quantity: Math.min(item.quantity, Math.floor(Math.random() * 3) + 1),
-                unit: item.unit,
-                isOptional: Math.random() > 0.8
-            });
+        const lunchIngredients = [
+            { name: "Bread", quantity: 2, unit: "slices" },
+            { name: "Cheese", quantity: 2, unit: "slices" },
+            { name: "Lettuce", quantity: 1, unit: "cup" },
+            { name: "Tomato", quantity: 1, unit: "count" }
+        ];
+
+        const dinnerIngredients = [
+            { name: "Chicken Breast", quantity: 1, unit: "pounds" },
+            { name: "Rice", quantity: 1, unit: "cup" },
+            { name: "Onions", quantity: 1, unit: "count" },
+            { name: "Garlic", quantity: 2, unit: "cloves" }
+        ];
+
+        const dessertIngredients = [
+            { name: "Sugar", quantity: 1, unit: "cup" },
+            { name: "Flour", quantity: 2, unit: "cups" },
+            { name: "Butter", quantity: 0.5, unit: "cup" },
+            { name: "Eggs", quantity: 2, unit: "count" }
+        ];
+
+        // Determine base ingredients by meal type tags
+        let baseIngredients: { name: string, quantity: number, unit: string }[] = [];
+
+        if (recipeTags.includes("Breakfast")) {
+            baseIngredients = [...breakfastIngredients];
+        } else if (recipeTags.includes("Lunch")) {
+            baseIngredients = [...lunchIngredients];
+        } else if (recipeTags.includes("Dinner")) {
+            baseIngredients = [...dinnerIngredients];
+        } else if (recipeTags.includes("Dessert")) {
+            baseIngredients = [...dessertIngredients];
+        } else {
+            // Default to dinner ingredients if no meal type tag
+            baseIngredients = [...dinnerIngredients];
         }
 
-        return randomIngredients;
+        // Add ingredients based on recipe name words
+        const recipeLower = recipeName.toLowerCase();
+
+        // Add recipe-specific ingredients
+        const specificIngredients: { [key: string]: { name: string, quantity: number, unit: string } } = {
+            "chicken": { name: "Chicken Breast", quantity: 1, unit: "pounds" },
+            "beef": { name: "Ground Beef", quantity: 1, unit: "pounds" },
+            "pork": { name: "Pork Chops", quantity: 2, unit: "count" },
+            "fish": { name: "Salmon Fillets", quantity: 2, unit: "count" },
+            "rice": { name: "Rice", quantity: 1, unit: "cup" },
+            "pasta": { name: "Pasta", quantity: 8, unit: "ounces" },
+            "potato": { name: "Potatoes", quantity: 3, unit: "count" },
+            "tomato": { name: "Tomatoes", quantity: 2, unit: "count" },
+            "cheese": { name: "Cheese", quantity: 1, unit: "cup" },
+            "spinach": { name: "Spinach", quantity: 2, unit: "cups" },
+            "mushroom": { name: "Mushrooms", quantity: 8, unit: "ounces" },
+            "avocado": { name: "Avocado", quantity: 1, unit: "count" },
+            "egg": { name: "Eggs", quantity: 2, unit: "count" },
+            "milk": { name: "Milk", quantity: 1, unit: "cup" },
+            "yogurt": { name: "Yogurt", quantity: 1, unit: "cup" },
+            "butter": { name: "Butter", quantity: 2, unit: "tablespoons" },
+            "apple": { name: "Apples", quantity: 2, unit: "count" },
+            "banana": { name: "Bananas", quantity: 2, unit: "count" },
+            "berry": { name: "Mixed Berries", quantity: 1, unit: "cup" },
+            "chocolate": { name: "Chocolate Chips", quantity: 1, unit: "cup" },
+            "sandwich": { name: "Bread", quantity: 2, unit: "slices" },
+            "salad": { name: "Lettuce", quantity: 1, unit: "head" },
+            "soup": { name: "Chicken Broth", quantity: 4, unit: "cups" },
+            "stir fry": { name: "Soy Sauce", quantity: 2, unit: "tablespoons" },
+            "cake": { name: "Flour", quantity: 2, unit: "cups" },
+            "cookie": { name: "Sugar", quantity: 1, unit: "cup" },
+            "bread": { name: "Flour", quantity: 3, unit: "cups" },
+            "oatmeal": { name: "Oats", quantity: 1, unit: "cup" },
+            "pancake": { name: "Pancake Mix", quantity: 1, unit: "cup" },
+            "waffle": { name: "Waffle Mix", quantity: 1, unit: "cup" }
+        };
+
+        // Add ingredients based on recipe name
+        Object.entries(specificIngredients).forEach(([keyword, ingredient]) => {
+            if (recipeLower.includes(keyword) &&
+                !baseIngredients.some(i => i.name.toLowerCase() === ingredient.name.toLowerCase())) {
+                baseIngredients.push(ingredient);
+            }
+        });
+
+        // Convert to RecipeIngredient objects
+        const recipeId = this.generateConsistentId(recipeName);
+        ingredients.push(...baseIngredients.map(ing => ({
+            recipeId,
+            name: ing.name,
+            quantity: ing.quantity,
+            unit: ing.unit,
+            isOptional: false
+        })));
+
+        // Add 1-2 optional ingredients
+        const optionalIngredients = [
+            { name: "Salt", quantity: 1, unit: "teaspoon" },
+            { name: "Pepper", quantity: 0.5, unit: "teaspoon" },
+            { name: "Olive Oil", quantity: 2, unit: "tablespoons" },
+            { name: "Garlic", quantity: 2, unit: "cloves" },
+            { name: "Lemon", quantity: 1, unit: "count" },
+            { name: "Herbs", quantity: 1, unit: "tablespoon" }
+        ];
+
+        // Using recipe name as seed to consistently select the same optional ingredients
+        const seed = recipeName.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+        const rng = (n: number) => (seed % n);
+
+        const optionalCount = 1 + (seed % 2); // 1 or 2 optional ingredients
+
+        for (let i = 0; i < optionalCount; i++) {
+            const idx = rng(optionalIngredients.length - i);
+            const optional = optionalIngredients.splice(idx, 1)[0];
+
+            if (optional && !ingredients.some(ing => ing.name === optional.name)) {
+                ingredients.push({
+                    recipeId,
+                    name: optional.name,
+                    quantity: optional.quantity,
+                    unit: optional.unit,
+                    isOptional: true
+                });
+            }
+        }
+
+        return ingredients;
+    }
+
+    // Helper function to generate a consistent ID from a string
+    private generateConsistentId(str: string): string {
+        const hash = str.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+        return `recipe_${hash.toString(16)}`;
     }
 
     // ====== DUMMY DATA METHODS ======
