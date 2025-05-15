@@ -10,7 +10,7 @@ import {
 import { notionPageToRecipe } from "../types/recipe";
 
 export class NotionPantryService {
-    private notion!: Client;
+    private notion: Client;
     private useDummyData: boolean;
 
     constructor(
@@ -23,7 +23,11 @@ export class NotionPantryService {
         this.useDummyData = useDummyData;
 
         this.notion = new Client({
-            auth: notionToken
+            auth: notionToken,
+            fetch: (...args) => {
+                // Use the global fetch with the correct binding
+                return fetch(...args);
+            }
         });
 
         console.log(`NotionPantryService initialized with${useDummyData ? ' dummy data' : ' real Notion connection'}`);
