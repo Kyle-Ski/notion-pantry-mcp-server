@@ -135,7 +135,9 @@ export function registerPantryTools(
                         let stapleInfo = item.isStaple ? " ★" : "";
                         let categoryInfo = filterByCategory ? "" : ` (${item.category})`;
 
-                        response += `- **${item.name}**${categoryInfo}: ${item.quantity} ${item.unit}${locationInfo}${expiryInfo}${stapleInfo}\n`;
+                        let notionLink = item.notionUrl ? ` - [Open in Notion](${item.notionUrl})` : "";
+
+                        response += `- **${item.name}**${categoryInfo}: ${item.quantity} ${item.unit}${locationInfo}${expiryInfo}${stapleInfo}${notionLink}\n`;
                     });
                     response += `\n`;
                 }
@@ -165,72 +167,73 @@ export function registerPantryTools(
         "getPantryAndRecipes",
         "Get pantry inventory and available recipes for meal planning",
         {
-          filterByTag: z.string().optional().describe("Filter recipes by a specific tag (e.g., 'Breakfast', 'Easy')"),
-          includeTriedOnly: z.boolean().optional().default(false).describe("Only include recipes you've tried before"),
-          maxRecipes: z.number().optional().default(10).describe("Maximum number of recipes to return")
+            filterByTag: z.string().optional().describe("Filter recipes by a specific tag (e.g., 'Breakfast', 'Easy')"),
+            includeTriedOnly: z.boolean().optional().default(false).describe("Only include recipes you've tried before"),
+            maxRecipes: z.number().optional().default(10).describe("Maximum number of recipes to return")
         },
         async ({ filterByTag, includeTriedOnly, maxRecipes }) => {
-          try {
-            // Get pantry items
-            const pantryItems = await notionService.getPantryItems();
-            
-            // Get recipes with ingredients
-            let recipesWithIngredients = await notionService.getRecipesWithIngredients();
-            
-            // Apply filters
-            if (filterByTag) {
-              recipesWithIngredients = recipesWithIngredients.filter(r => 
-                r.recipe.tags.includes(filterByTag)
-              );
+            try {
+                // Get pantry items
+                const pantryItems = await notionService.getPantryItems();
+
+                // Get recipes with ingredients
+                let recipesWithIngredients = await notionService.getRecipesWithIngredients();
+
+                // Apply filters
+                if (filterByTag) {
+                    recipesWithIngredients = recipesWithIngredients.filter(r =>
+                        r.recipe.tags.includes(filterByTag)
+                    );
+                }
+
+                if (includeTriedOnly) {
+                    recipesWithIngredients = recipesWithIngredients.filter(r => r.recipe.tried);
+                }
+
+                // Limit the number of recipes to avoid overwhelming the LLM
+                recipesWithIngredients = recipesWithIngredients.slice(0, maxRecipes);
+
+                // Format the data for the LLM to process
+                const response = {
+                    pantry: pantryItems.map(item => ({
+                        name: item.name,
+                        quantity: item.quantity,
+                        unit: item.unit,
+                        category: item.category,
+                        expiry: item.expiryDate
+                    })),
+
+                    recipes: recipesWithIngredients.map(r => ({
+                        id: r.recipe.id,
+                        name: r.recipe.name,
+                        tried: r.recipe.tried,
+                        tags: r.recipe.tags,
+                        link: r.recipe.link,
+                        notionUrl: r.recipe.notionUrl, // Add Notion URL here
+                        ingredients: r.ingredients.map(ing => ({
+                            name: ing.name,
+                            quantity: ing.quantity,
+                            unit: ing.unit,
+                            optional: ing.isOptional
+                        }))
+                    }))
+                };
+
+                // Return structured data for the LLM to reason about
+                return {
+                    content: [{
+                        type: "text",
+                        text: `# Pantry and Recipe Data\n\nHere is the current pantry inventory and available recipes. You can analyze this data to suggest meals that can be made with available ingredients.\n\n${JSON.stringify(response, null, 2)}`
+                    }]
+                };
+            } catch (error: any) {
+                console.error("Error in getPantryAndRecipes:", error);
+                return {
+                    content: [{ type: "text", text: `Error retrieving pantry and recipe data: ${error.message}` }]
+                };
             }
-            
-            if (includeTriedOnly) {
-              recipesWithIngredients = recipesWithIngredients.filter(r => r.recipe.tried);
-            }
-            
-            // Limit the number of recipes to avoid overwhelming the LLM
-            recipesWithIngredients = recipesWithIngredients.slice(0, maxRecipes);
-            
-            // Format the data for the LLM to process
-            const response = {
-              pantry: pantryItems.map(item => ({
-                name: item.name,
-                quantity: item.quantity,
-                unit: item.unit,
-                category: item.category,
-                expiry: item.expiryDate
-              })),
-              
-              recipes: recipesWithIngredients.map(r => ({
-                id: r.recipe.id,
-                name: r.recipe.name,
-                tried: r.recipe.tried,
-                tags: r.recipe.tags,
-                link: r.recipe.link,
-                ingredients: r.ingredients.map(ing => ({
-                  name: ing.name,
-                  quantity: ing.quantity,
-                  unit: ing.unit,
-                  optional: ing.isOptional
-                }))
-              }))
-            };
-            
-            // Return structured data for the LLM to reason about
-            return {
-              content: [{ 
-                type: "text", 
-                text: `# Pantry and Recipe Data\n\nHere is the current pantry inventory and available recipes. You can analyze this data to suggest meals that can be made with available ingredients.\n\n${JSON.stringify(response, null, 2)}` 
-              }]
-            };
-          } catch (error: any) {
-            console.error("Error in getPantryAndRecipes:", error);
-            return {
-              content: [{ type: "text", text: `Error retrieving pantry and recipe data: ${error.message}` }]
-            };
-          }
         }
-      )
+    )
 
     /**
      * Tool: Update pantry after cooking a recipe
@@ -295,7 +298,12 @@ export function registerPantryTools(
 
                 // Generate the response
                 let response = `# Pantry Updated\n\n`;
-                response += `Your pantry has been updated after preparing **${recipeWithIngredients.recipe.name}**.\n\n`;
+                // Add Notion link if available
+                if (recipeWithIngredients.recipe.notionUrl) {
+                    response += `Your pantry has been updated after preparing **${recipeWithIngredients.recipe.name}** ([Open in Notion](${recipeWithIngredients.recipe.notionUrl})).\n\n`;
+                } else {
+                    response += `Your pantry has been updated after preparing **${recipeWithIngredients.recipe.name}**.\n\n`;
+                }
 
                 // Show what was used
                 response += `## Ingredients Used\n`;
@@ -388,7 +396,8 @@ export function registerPantryTools(
                     });
 
                     response = `# Item Updated in Pantry\n\n`;
-                    response += `**${updatedItem.name}** has been updated in your pantry. Quantity increased by ${quantity} ${unit}.\n\n`;
+                    const notionLink = updatedItem.notionUrl ? ` ([Open in Notion](${updatedItem.notionUrl}))` : "";
+                    response += `**${updatedItem.name}**${notionLink} has been updated in your pantry. Quantity increased by ${quantity} ${unit}.\n\n`;
 
                     // Details
                     response += `## Updated Details\n`;
@@ -421,7 +430,8 @@ export function registerPantryTools(
                     });
 
                     response = `# Item Added to Pantry\n\n`;
-                    response += `**${newItem.name}** has been added to your pantry in the ${newItem.category} category.\n\n`;
+                    const notionLink = newItem.notionUrl ? ` ([Open in Notion](${newItem.notionUrl}))` : "";
+                    response += `**${newItem.name}**${notionLink} has been added to your pantry in the ${newItem.category} category.\n\n`;
 
                     // Details
                     response += `## Details\n`;
@@ -501,7 +511,10 @@ export function registerPantryTools(
                                     const priorityMarker = item.priority === "High" ? "🔴 " :
                                         item.priority === "Medium" ? "🟡 " : "🟢 ";
 
-                                    response += `- ${checkmark}${priorityMarker}**${item.name}**: ${item.quantity} ${item.unit}\n`;
+                                    // Add Notion URL if available
+                                    const notionLink = item.notionUrl ? ` - [Open in Notion](${item.notionUrl})` : "";
+
+                                    response += `- ${checkmark}${priorityMarker}**${item.name}**: ${item.quantity} ${item.unit}${notionLink}\n`;
                                 });
 
                                 response += "\n";
@@ -541,7 +554,8 @@ export function registerPantryTools(
                             });
 
                             response = `# Item Updated in Shopping List\n\n`;
-                            response += `**${updatedItem.name}** has been updated in your shopping list. Quantity increased to ${updatedItem.quantity} ${updatedItem.unit}.\n`;
+                            const notionLink = updatedItem.notionUrl ? ` ([Open in Notion](${updatedItem.notionUrl}))` : "";
+                            response += `**${updatedItem.name}**${notionLink} has been updated in your shopping list. Quantity increased to ${updatedItem.quantity} ${updatedItem.unit}.\n`;
                         } else {
                             // Add the item
                             const newItem = await notionService.addToShoppingList({
@@ -555,7 +569,8 @@ export function registerPantryTools(
                             });
 
                             response = `# Item Added to Shopping List\n\n`;
-                            response += `**${newItem.name}** (${newItem.quantity} ${newItem.unit}) has been added to your shopping list in the ${newItem.category} category.\n`;
+                            const notionLink = newItem.notionUrl ? ` ([Open in Notion](${newItem.notionUrl}))` : "";
+                            response += `**${newItem.name}**${notionLink} (${newItem.quantity} ${newItem.unit}) has been added to your shopping list in the ${newItem.category} category.\n`;
                         }
                         break;
 
@@ -574,7 +589,8 @@ export function registerPantryTools(
                         const updatedItem = await notionService.markAsPurchased(itemId);
 
                         response = `# Item Marked as Purchased\n\n`;
-                        response += `**${updatedItem.name}** has been marked as purchased on your shopping list.\n`;
+                        const notionLink = updatedItem.notionUrl ? ` ([Open in Notion](${updatedItem.notionUrl}))` : "";
+                        response += `**${updatedItem.name}**${notionLink} has been marked as purchased on your shopping list.\n`;
 
                         // Suggest adding to pantry
                         response += `\nYou can add all purchased items to your pantry using the \`addToPantry\` action.\n`;

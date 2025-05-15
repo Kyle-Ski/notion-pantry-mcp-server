@@ -36,19 +36,15 @@ export class NotionPantryService {
     // ====== PANTRY METHODS ======
 
     /**
-     * Get all pantry items
-     */
+ * Get all pantry items
+ */
     async getPantryItems(): Promise<PantryItem[]> {
         if (this.useDummyData) {
             return this.getDummyPantryItems();
         }
 
         try {
-            // Ensure we're using the bound version of the notion client
-            const notionClient = this.notion;
-
-            // Use a properly bound call to databases.query
-            const response = await notionClient.databases.query({
+            const response = await this.notion.databases.query({
                 database_id: this.pantryDbId,
                 sorts: [
                     {
@@ -58,8 +54,18 @@ export class NotionPantryService {
                 ]
             });
 
-            // Return the mapped results
-            return response.results.map(page => this.notionPageToPantryItem(page));
+            // Map results without URLs first
+            const items = response.results.map(page => this.notionPageToPantryItem(page));
+
+            // Batch get all URLs at once
+            const pageIds = items.map(item => item.id);
+            const urlMap = await this.batchGetNotionPageUrls(pageIds);
+
+            // Add URLs to items
+            return items.map(item => ({
+                ...item,
+                notionUrl: urlMap[item.id]
+            }));
         } catch (error) {
             console.error('Error fetching pantry items:', error);
             throw new Error(`Failed to fetch pantry items from Notion: ${error instanceof Error ? error.message : String(error)}`);
@@ -80,7 +86,10 @@ export class NotionPantryService {
                 page_id: itemId
             });
 
-            return this.notionPageToPantryItem(page);
+            const item = this.notionPageToPantryItem(page);
+
+            const url = await this.getNotionPageUrl(itemId);
+            return { ...item, notionUrl: url || undefined };
         } catch (error) {
             console.error(`Error fetching pantry item ${itemId}:`, error);
             return null;
@@ -202,8 +211,8 @@ export class NotionPantryService {
     // ====== RECIPE METHODS ======
 
     /**
-     * Get all recipes
-     */
+ * Get all recipes
+ */
     async getRecipes(): Promise<Recipe[]> {
         if (this.useDummyData) {
             return this.getDummyRecipes();
@@ -220,7 +229,18 @@ export class NotionPantryService {
                 ]
             });
 
-            return response.results.map(page => notionPageToRecipe(page));
+            // Map results to Recipe objects
+            const recipes = response.results.map(page => notionPageToRecipe(page));
+
+            // Fetch URLs for each recipe
+            const recipesWithUrls = await Promise.all(
+                recipes.map(async (recipe) => {
+                    const url = await this.getNotionPageUrl(recipe.id);
+                    return { ...recipe, notionUrl: url || undefined };
+                })
+            );
+
+            return recipesWithUrls;
         } catch (error) {
             console.error('Error fetching recipes:', error);
             throw new Error('Failed to fetch recipes from Notion');
@@ -241,7 +261,11 @@ export class NotionPantryService {
                 page_id: recipeId
             });
 
-            return notionPageToRecipe(page);
+            const recipe = notionPageToRecipe(page);
+
+            const url = await this.getNotionPageUrl(recipeId);
+
+            return { ...recipe, notionUrl: url || undefined };
         } catch (error) {
             console.error(`Error fetching recipe ${recipeId}:`, error);
             return null;
@@ -459,8 +483,8 @@ export class NotionPantryService {
     // ====== SHOPPING LIST METHODS ======
 
     /**
-     * Get all shopping list items
-     */
+ * Get all shopping list items
+ */
     async getShoppingList(): Promise<ShoppingListItem[]> {
         if (this.useDummyData) {
             return this.getDummyShoppingList();
@@ -481,7 +505,18 @@ export class NotionPantryService {
                 ]
             });
 
-            return response.results.map(page => this.notionPageToShoppingListItem(page));
+            // Map results to shopping list items
+            const items = response.results.map(page => this.notionPageToShoppingListItem(page));
+
+            // Fetch URLs for each item
+            const itemsWithUrls = await Promise.all(
+                items.map(async (item) => {
+                    const url = await this.getNotionPageUrl(item.id);
+                    return { ...item, notionUrl: url || undefined };
+                })
+            );
+
+            return itemsWithUrls;
         } catch (error) {
             console.error('Error fetching shopping list:', error);
             throw new Error('Failed to fetch shopping list from Notion');
@@ -811,6 +846,56 @@ export class NotionPantryService {
         }
 
         return properties;
+    }
+
+    /**
+ * Get the Notion URL for a specific page
+ */
+    async getNotionPageUrl(pageId: string): Promise<string | null> {
+        if (this.useDummyData) {
+            // For dummy data, generate a fake URL
+            return `https://www.notion.so/Dummy-Page-${pageId}`;
+        }
+
+        try {
+            const page = await this.notion.pages.retrieve({ page_id: pageId });
+            // @ts-ignore: Notion’s runtime response includes `url`
+            return page.url;
+        } catch (error) {
+            console.error(`Error getting page URL for ${pageId}:`, error);
+            return null;
+        }
+    }
+
+    /**
+    * A more efficient method to get Notion URLs for multiple pages at once
+    */
+    async batchGetNotionPageUrls(pageIds: string[]): Promise<Record<string, string>> {
+        if (this.useDummyData) {
+            // Generate dummy URLs for all IDs
+            return Object.fromEntries(
+                pageIds.map(id => [id, `https://www.notion.so/Dummy-Page-${id}`])
+            );
+        }
+
+        // Use Promise.all to fetch all pages in parallel
+        const results = await Promise.all(
+            pageIds.map(async (id) => {
+                try {
+                    const page = await this.notion.pages.retrieve({ page_id: id });
+                    // @ts-ignore: Notion’s runtime response includes `url`
+                    return [id, page.url];
+                } catch (error) {
+                    console.error(`Error getting page URL for ${id}:`, error);
+                    return [id, null];
+                }
+            })
+        );
+
+        // Filter out any failed requests and convert to an object
+        return Object.fromEntries(
+            results.filter(([_, url]) => url !== null) as [string, string][]
+        );
     }
 
     /**

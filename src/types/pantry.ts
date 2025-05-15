@@ -8,6 +8,9 @@ export interface PantryItem {
     // Unique identifier from Notion
     id: string;
 
+    // Url for the Notion page
+    notionUrl?: string;
+
     // Name of the item (maps to Notion Title property)
     name: string;
 

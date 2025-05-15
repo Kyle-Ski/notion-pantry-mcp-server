@@ -8,6 +8,11 @@ export interface Recipe {
     id: string;
 
     /**
+     *  Url for the Notion page 
+     */
+    notionUrl?: string;
+
+    /**
      * Recipe name (maps to Notion "Name" title property)
      */
     name: string;
