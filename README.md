@@ -95,45 +95,18 @@ npm run deploy
 
 ## MCP Tools
 
-The server provides several tools for LLMs to interact with your pantry:
+The server provides the following tools for LLMs to interact with your pantry system:
 
-`getPantryInfo`
-View comprehensive information about your pantry inventory, including:
-
-* Expiring items
-* Staples running low
-* Items organized by category
-* Links to Notion pages
-
-`getPantryAndRecipes`
-Get structured data about your pantry and recipes for meal planning, including:
-
-* Available ingredients
-* Recipe details with ingredients
-* Tags and cooking status
-
-`updatePantryAfterCooking`
-After preparing a meal, update your pantry by:
-
-* Decreasing quantities of used ingredients
-* Automatically adding depleted staples to shopping list
-* Marking recipes as tried
-
-`addPantryItem`
-Add new items to your pantry or update existing ones, tracking:
-
-* Quantity and units
-* Category and location
-* Expiry dates
-* Staple status
-
-`manageShoppingList`
-Manage your shopping list with actions to:
-
-* View current shopping needs
-* Add new items
-* Mark items as purchased
-* Transfer purchased items to pantry
+| Tool | Description | Key Features |
+|------|-------------|--------------|
+| `getPantryInfo` | View comprehensive information about your pantry inventory | • Complete item listing with quantities<br>• Expiring items within the next week<br>• Staples running low<br>• Category distribution<br>• Notion page links |
+| `getPantryAndRecipes` | Get pantry inventory and recipes for meal planning | • Current pantry inventory<br>• Recipe details with ingredients<br>• Recipe tags and tried status<br>• Recipe source links |
+| `updatePantryAfterCooking` | Update pantry after preparing a meal | • Auto-decrease used ingredients<br>• Add depleted staples to shopping list<br>• Mark recipes as tried<br>• Detailed change report |
+| `addPantryItem` | Add or update pantry items | • Quantity, unit, category tracking<br>• Expiry date management<br>• Staple item flagging<br>• Smart duplicate handling |
+| `getShoppingList` | View current shopping list | • Items organized by category<br>• Purchase status tracking<br>• Priority levels<br>• Auto-added vs manual items |
+| `addToShoppingList` | Add items to shopping list | • Quantity, unit, category tracking<br>• Priority assignment<br>• Smart duplicate handling |
+| `markItemAsPurchased` | Mark shopping list items as purchased | • Update purchase status<br>• Prepare for pantry transfer |
+| `addPurchasedItemsToPantry` | Transfer purchased items to pantry | • Bulk transfer of purchased items<br>• Update existing pantry quantities<br>• Remove from shopping list |
 
 ## Example Usage
 Here are some examples of how to interact with the MCP server:
@@ -155,6 +128,12 @@ The LLM will use getPantryAndRecipes to analyze your pantry contents and suggest
 "I'd like to make Chicken Parmesan. What ingredients do I need to add to my shopping list?"
 ```
 The LLM will check your pantry inventory, identify missing ingredients, and add them to your shopping list.
+
+### **Adding Purchases Items to Pantry**
+```
+I just finished shopping, can you add all of the purchased items to my pantry?
+```
+The LLM will look at your shopping list for purchased items, and add all of them to your pantry.
 
 ## Database Structure
 

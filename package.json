@@ -14,7 +14,7 @@
     "octokit": "^4.1.2",
     "prettier": "^3.5.3",
     "typescript": "^5.8.3",
-    "wrangler": "^4.13.1"
+    "wrangler": "^4.15.1"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.0.3",
