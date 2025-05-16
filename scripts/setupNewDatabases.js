@@ -30,7 +30,7 @@ import {
   SHOPPING_LIST_DATABASE_SCHEMA,
   INGREDIENTS_DATABASE_SCHEMA,
   RECIPE_INGREDIENTS_SCHEMA
-} from '../src/types/notionSchema.js';
+} from './schema.js';
 
 /**
  * Create a new top-level Notion page
