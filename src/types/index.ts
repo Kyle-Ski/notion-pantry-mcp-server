@@ -5,3 +5,5 @@ export * from './recipeIngredients';
 export * from './shoppingList';
 export * from './notionSchema';
 export * from './utils';
+export * from './ingredient';
+export * from './recipeIngredientRelation';

@@ -42,6 +42,11 @@ export interface Recipe {
      * When the recipe was created (maps to Notion "Created On" created_time property)
      */
     createdAt: string;
+
+    /**
+     * Was the item created or updated by our LLM?
+     */
+    aiModified?: boolean;
 }
 
 /**
@@ -56,6 +61,7 @@ export function notionPageToRecipe(page: any): Recipe {
         link: page.properties['Link']?.url || '',
         tags: page.properties['Tags']?.multi_select?.map((ms: any) => ms.name) || [],
         createdAt: page.properties['Created On']?.created_time || '',
+        aiModified: page.properties['AI Modified']?.checkbox || false,
     };
 }
 
@@ -98,6 +104,12 @@ export function recipeToNotionProperties(recipe: Partial<Recipe>): any {
     if (recipe.tags !== undefined) {
         properties['Tags'] = {
             multi_select: recipe.tags.map(tag => ({ name: tag }))
+        };
+    }
+
+    if (recipe.aiModified !== undefined) {
+        properties['AI Modified'] = {
+            checkbox: recipe.aiModified
         };
     }
 

@@ -54,6 +54,9 @@ export interface PantryItem {
 
     // When the item was created (maps to Notion Created Time property)
     createdAt: string;
+
+    // Was the item created or updated by our LLM?
+    aiModified?: boolean;
 }
 
 /**
@@ -78,7 +81,8 @@ export function notionPageToPantryItem(page: NotionPageObject): PantryItem {
         tags: extractMultiSelect(properties.Tags),
         minQuantity: extractNumber(properties.MinQuantity),
         lastUpdated: page.last_edited_time,
-        createdAt: page.created_time
+        createdAt: page.created_time,
+        aiModified: extractCheckbox(properties['AI Modified'])
     };
 }
 

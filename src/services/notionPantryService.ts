@@ -1,9 +1,13 @@
 // src/services/notionPantryService.ts
 import { Client } from "@notionhq/client";
 import {
+    notionPageToIngredient,
+    notionPageToRecipeIngredientRelation,
+    type Ingredient,
     type PantryItem,
     type Recipe,
     type RecipeIngredient,
+    type RecipeIngredientRelation,
     type RecipeWithIngredients,
     type ShoppingListItem
 } from "../types";
@@ -18,6 +22,8 @@ export class NotionPantryService {
         private pantryDbId: string,
         private recipesDbId: string,
         private shoppingListDbId: string,
+        private ingredientsDbId: string = '',
+        private recipeIngredientsDbId: string = '',
         useDummyData: boolean = false
     ) {
         this.useDummyData = useDummyData;
@@ -33,8 +39,530 @@ export class NotionPantryService {
         console.log(`NotionPantryService initialized with${useDummyData ? ' dummy data' : ' real Notion connection'}`);
     }
 
+    /**
+     * Helps detect the user's database structure for our MCP server and setup wizard
+     */
+    async detectDatabaseStructure(notionClient: Client, databaseId: string) {
+        try {
+            // Retrieve database schema
+            const database = await notionClient.databases.retrieve({
+                database_id: databaseId
+            });
+
+            // Map properties to our expected structure
+            const propertyMap: Record<string, string> = {};
+            const propertyTypes: Record<string, string> = {};
+
+            // Analyze each property in the database
+            for (const [propName, propDetails] of Object.entries(database.properties)) {
+                const type = propDetails.type;
+                propertyTypes[propName] = type;
+
+                // Map standard properties based on type and name patterns
+                if (type === 'title') {
+                    propertyMap['name'] = propName;
+                } else if (type === 'number' && /quant/i.test(propName)) {
+                    propertyMap['quantity'] = propName;
+                } else if (type === 'select' && /unit|measure/i.test(propName)) {
+                    propertyMap['unit'] = propName;
+                } else if (type === 'select' && /categor/i.test(propName)) {
+                    propertyMap['category'] = propName;
+                } else if (type === 'checkbox' && /staple|essential/i.test(propName)) {
+                    propertyMap['isStaple'] = propName;
+                } else if (type === 'checkbox' && /ai|modified|generated/i.test(propName)) {
+                    propertyMap['aiModified'] = propName;
+                }
+                // And so on for other properties
+            }
+
+            return {
+                propertyMap,
+                propertyTypes,
+                missingProperties: this.identifyMissingProperties(propertyMap)
+            };
+        } catch (error: any) {
+            console.error('Error detecting database structure:', error);
+            throw new Error(`Failed to analyze database structure: ${error.message}`);
+        }
+    }
+
+    private identifyMissingProperties(propertyMap: Record<string, string>): string[] {
+        const requiredProperties = ['name', 'quantity', 'unit', 'category'];
+        return requiredProperties.filter(prop => !propertyMap[prop]);
+    }
+
+    // ====== INGREDIENT METHODS ==
+
+    // In src/services/notionPantryService.ts
+
+    /**
+     * Get all ingredients from the ingredients database
+     */
+    async getIngredients(): Promise<Ingredient[]> {
+        if (this.useDummyData || !this.ingredientsDbId) {
+            return this.getDummyIngredients();
+        }
+
+        try {
+            const response = await this.notion.databases.query({
+                database_id: this.ingredientsDbId,
+                sorts: [
+                    {
+                        property: "Name",
+                        direction: "ascending"
+                    }
+                ]
+            });
+
+            return response.results.map(page => notionPageToIngredient(page));
+        } catch (error) {
+            console.error('Error fetching ingredients:', error);
+            throw new Error('Failed to fetch ingredients from Notion');
+        }
+    }
+
+    /**
+     * Get a specific ingredient by ID
+     */
+    async getIngredientById(id: string): Promise<Ingredient | null> {
+        if (this.useDummyData || !this.ingredientsDbId) {
+            const ingredients = await this.getDummyIngredients();
+            return ingredients.find(ingredient => ingredient.id === id) || null;
+        }
+
+        try {
+            const page = await this.notion.pages.retrieve({
+                page_id: id
+            });
+
+            return notionPageToIngredient(page);
+        } catch (error) {
+            console.error(`Error fetching ingredient ${id}:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Add a new ingredient to the ingredients database
+     */
+    async addIngredient(ingredient: Omit<Ingredient, 'id' | 'createdAt' | 'lastUpdated'>): Promise<Ingredient> {
+        if (this.useDummyData || !this.ingredientsDbId) {
+            const dummyIngredient: Ingredient = {
+                id: `dummy_ingredient_${Date.now()}`,
+                ...ingredient,
+                aiModified: true,
+                createdAt: new Date().toISOString(),
+                lastUpdated: new Date().toISOString()
+            };
+
+            console.log(`[DUMMY] Added ingredient: ${dummyIngredient.name}`);
+            return dummyIngredient;
+        }
+
+        try {
+            const properties: any = {
+                'Name': {
+                    title: [{
+                        text: {
+                            content: ingredient.name
+                        }
+                    }]
+                },
+                'Units': {
+                    multi_select: (ingredient.units || []).map(unit => ({ name: unit }))
+                },
+                'Category': {
+                    select: {
+                        name: ingredient.category
+                    }
+                },
+                'Perishable': {
+                    checkbox: ingredient.perishable
+                },
+                'Storage': {
+                    select: {
+                        name: ingredient.storage
+                    }
+                },
+                'AI Modified': {
+                    checkbox: ingredient.aiModified !== undefined ? ingredient.aiModified : true
+                }
+            };
+
+            if (ingredient.shelfLifeDays !== undefined) {
+                properties['ShelfLifeDays'] = {
+                    number: ingredient.shelfLifeDays
+                };
+            }
+
+            if (ingredient.notes) {
+                properties['Notes'] = {
+                    rich_text: [{
+                        text: {
+                            content: ingredient.notes
+                        }
+                    }]
+                };
+            }
+
+            const response = await this.notion.pages.create({
+                parent: {
+                    database_id: this.ingredientsDbId
+                },
+                properties: properties
+            });
+
+            return notionPageToIngredient(response);
+        } catch (error) {
+            console.error('Error adding ingredient:', error);
+            throw new Error(`Failed to add ingredient: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /**
+     * Get recipe ingredient relations for a specific recipe
+     */
+    async getRecipeIngredientRelations(recipeId: string): Promise<RecipeIngredientRelation[]> {
+        if (this.useDummyData || !this.recipeIngredientsDbId) {
+            return this.getDummyRecipeIngredientRelations(recipeId);
+        }
+
+        try {
+            const response = await this.notion.databases.query({
+                database_id: this.recipeIngredientsDbId,
+                filter: {
+                    property: "Recipe",
+                    relation: {
+                        contains: recipeId
+                    }
+                }
+            });
+
+            return response.results.map(page => notionPageToRecipeIngredientRelation(page));
+        } catch (error) {
+            console.error(`Error fetching recipe ingredient relations for recipe ${recipeId}:`, error);
+            throw new Error(`Failed to fetch recipe ingredient relations`);
+        }
+    }
+
+    /**
+     * Add a recipe ingredient relation
+     */
+    async addRecipeIngredientRelation(
+        relation: Omit<RecipeIngredientRelation, 'id' | 'name' | 'createdAt' | 'lastUpdated'>
+    ): Promise<RecipeIngredientRelation> {
+        if (this.useDummyData || !this.recipeIngredientsDbId) {
+            const dummyRelation: RecipeIngredientRelation = {
+                id: `dummy_relation_${Date.now()}`,
+                name: `Relation ${Date.now()}`,
+                ...relation,
+                aiModified: true,
+                createdAt: new Date().toISOString(),
+                lastUpdated: new Date().toISOString()
+            };
+
+            console.log(`[DUMMY] Added recipe ingredient relation`);
+            return dummyRelation;
+        }
+
+        try {
+            // Get names of recipe and ingredient for the title
+            let recipeName = "Recipe";
+            let ingredientName = "Ingredient";
+
+            try {
+                const recipe = await this.getRecipeById(relation.recipeId);
+                if (recipe) {
+                    recipeName = recipe.name;
+                }
+            } catch (error) {
+                console.error(`Error getting recipe name for relation:`, error);
+            }
+
+            try {
+                const ingredient = await this.getIngredientById(relation.ingredientId);
+                if (ingredient) {
+                    ingredientName = ingredient.name;
+                }
+            } catch (error) {
+                console.error(`Error getting ingredient name for relation:`, error);
+            }
+
+            // Create name for the relation
+            const relationName = `${recipeName} - ${ingredientName} (${relation.quantity} ${relation.unit})`;
+
+            const properties: any = {
+                'Name': {
+                    title: [{
+                        text: {
+                            content: relationName
+                        }
+                    }]
+                },
+                'Recipe': {
+                    relation: [{
+                        id: relation.recipeId
+                    }]
+                },
+                'Ingredient': {
+                    relation: [{
+                        id: relation.ingredientId
+                    }]
+                },
+                'Quantity': {
+                    number: relation.quantity
+                },
+                'Unit': {
+                    select: {
+                        name: relation.unit
+                    }
+                },
+                'Optional': {
+                    checkbox: relation.isOptional
+                },
+                'AI Modified': {
+                    checkbox: relation.aiModified !== undefined ? relation.aiModified : true
+                }
+            };
+
+            if (relation.preparation) {
+                properties['Preparation'] = {
+                    rich_text: [{
+                        text: {
+                            content: relation.preparation
+                        }
+                    }]
+                };
+            }
+
+            const response = await this.notion.pages.create({
+                parent: {
+                    database_id: this.recipeIngredientsDbId
+                },
+                properties: properties
+            });
+
+            return notionPageToRecipeIngredientRelation(response);
+        } catch (error) {
+            console.error('Error adding recipe ingredient relation:', error);
+            throw new Error(`Failed to add recipe ingredient relation: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    // Add dummy methods for testing
+
+    private getDummyIngredients(): Ingredient[] {
+        return [
+            {
+                id: "ingredient_1",
+                name: "Chicken Breast",
+                units: ["pounds", "count"],
+                category: "Meat & Seafood",
+                perishable: true,
+                storage: "Refrigerator",
+                shelfLifeDays: 3,
+                createdAt: new Date().toISOString(),
+                lastUpdated: new Date().toISOString()
+            },
+            {
+                id: "ingredient_2",
+                name: "Rice",
+                units: ["cups", "pounds"],
+                category: "Grains",
+                perishable: false,
+                storage: "Pantry",
+                shelfLifeDays: 365,
+                createdAt: new Date().toISOString(),
+                lastUpdated: new Date().toISOString()
+            },
+            {
+                id: "ingredient_3",
+                name: "Onions",
+                units: ["count"],
+                category: "Produce",
+                perishable: true,
+                storage: "Pantry",
+                shelfLifeDays: 30,
+                createdAt: new Date().toISOString(),
+                lastUpdated: new Date().toISOString()
+            }
+        ];
+    }
+
+    private getDummyRecipeIngredientRelations(recipeId: string): RecipeIngredientRelation[] {
+        if (recipeId === "recipe_1") { // For Breakfast Sandwich
+            return [
+                {
+                    id: "relation_1",
+                    name: "Breakfast Sandwich - Eggs",
+                    recipeId: "recipe_1",
+                    ingredientId: "ingredient_eggs",
+                    quantity: 2,
+                    unit: "count",
+                    isOptional: false,
+                    createdAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString()
+                },
+                {
+                    id: "relation_2",
+                    name: "Breakfast Sandwich - Bread",
+                    recipeId: "recipe_1",
+                    ingredientId: "ingredient_bread",
+                    quantity: 2,
+                    unit: "slices",
+                    isOptional: false,
+                    createdAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString()
+                }
+            ];
+        } else if (recipeId === "recipe_2") { // For Chicken and Rice
+            return [
+                {
+                    id: "relation_3",
+                    name: "Chicken and Rice - Chicken",
+                    recipeId: "recipe_2",
+                    ingredientId: "ingredient_1", // Chicken
+                    quantity: 0.5,
+                    unit: "pounds",
+                    isOptional: false,
+                    createdAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString()
+                },
+                {
+                    id: "relation_4",
+                    name: "Chicken and Rice - Rice",
+                    recipeId: "recipe_2",
+                    ingredientId: "ingredient_2", // Rice
+                    quantity: 1,
+                    unit: "cups",
+                    isOptional: false,
+                    createdAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString()
+                },
+                {
+                    id: "relation_5",
+                    name: "Chicken and Rice - Onions",
+                    recipeId: "recipe_2",
+                    ingredientId: "ingredient_3", // Onions
+                    quantity: 0.5,
+                    unit: "count",
+                    isOptional: false,
+                    createdAt: new Date().toISOString(),
+                    lastUpdated: new Date().toISOString()
+                }
+            ];
+        }
+
+        return []; // Default empty array for other recipe IDs
+    }
+
     // ====== PANTRY METHODS ======
 
+
+    // In src/services/notionPantryService.ts
+
+    /**
+     * Add a new recipe to the Notion recipes database
+     */
+    async addRecipe(recipeData: {
+        name: string;
+        ingredients: string;
+        instructions: string;
+        tags?: string[];
+        prepTime?: number;
+        cookTime?: number;
+        aiModified?: boolean;
+    }): Promise<Recipe> {
+        if (this.useDummyData) {
+            const dummyRecipe: Recipe = {
+                id: `dummy_recipe_${Date.now()}`,
+                name: recipeData.name,
+                tried: false,
+                kitchenTools: [],
+                link: '',
+                tags: recipeData.tags || [],
+                aiModified: recipeData.aiModified || true,
+                createdAt: new Date().toISOString()
+            };
+
+            console.log(`[DUMMY] Added recipe: ${dummyRecipe.name}`);
+            return dummyRecipe;
+        }
+
+        try {
+            // Create properties object for the new recipe
+            const properties: any = {
+                'Name': {
+                    title: [{
+                        text: {
+                            content: recipeData.name
+                        }
+                    }]
+                },
+                'Ingredients': {
+                    rich_text: [{
+                        text: {
+                            content: recipeData.ingredients
+                        }
+                    }]
+                },
+                'Instructions': {
+                    rich_text: [{
+                        text: {
+                            content: recipeData.instructions
+                        }
+                    }]
+                },
+                'Tried?': {
+                    checkbox: false
+                },
+                'AI Modified': {
+                    checkbox: recipeData.aiModified !== undefined ? recipeData.aiModified : true
+                }
+            };
+
+            // Add optional properties
+            if (recipeData.tags && recipeData.tags.length > 0) {
+                properties['Tags'] = {
+                    multi_select: recipeData.tags.map(tag => ({ name: tag }))
+                };
+            }
+
+            if (recipeData.prepTime !== undefined) {
+                properties['PrepTime'] = {
+                    number: recipeData.prepTime
+                };
+            }
+
+            if (recipeData.cookTime !== undefined) {
+                properties['CookTime'] = {
+                    number: recipeData.cookTime
+                };
+            }
+
+            // Create the recipe in Notion
+            const response = await this.notion.pages.create({
+                parent: {
+                    database_id: this.recipesDbId
+                },
+                properties: properties
+            });
+
+            // Convert the response to a Recipe object
+            const newRecipe = notionPageToRecipe(response);
+
+            // Get the Notion URL for the new recipe
+            const url = await this.getNotionPageUrl(newRecipe.id);
+
+            return {
+                ...newRecipe,
+                notionUrl: url || undefined
+            };
+        } catch (error) {
+            console.error('Error adding recipe:', error);
+            throw new Error(`Failed to add recipe: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
     /**
      * Delete a shopping list item
      */
@@ -47,7 +575,7 @@ export class NotionPantryService {
         try {
             await this.notion.pages.update({
                 page_id: id,
-                archived: true
+                archived: true,
             });
         } catch (error) {
             console.error(`Error deleting shopping list item ${id}:`, error);
@@ -157,6 +685,7 @@ export class NotionPantryService {
             const dummyItem: PantryItem = {
                 id: `dummy_${Date.now()}`,
                 ...item,
+                aiModified: true,
                 createdAt: new Date().toISOString(),
                 lastUpdated: new Date().toISOString()
             };
@@ -170,7 +699,7 @@ export class NotionPantryService {
                 parent: {
                     database_id: this.pantryDbId
                 },
-                properties: this.pantryItemToNotionProperties(item)
+                properties: this.pantryItemToNotionProperties({ ...item, aiModified: true })
             });
 
             return this.notionPageToPantryItem(response);
@@ -188,6 +717,7 @@ export class NotionPantryService {
             const dummyItem: PantryItem = {
                 ...this.getDummyPantryItems().find(i => i.id === id)!,
                 ...item,
+                aiModified: true,
                 lastUpdated: new Date().toISOString()
             };
 
@@ -198,7 +728,7 @@ export class NotionPantryService {
         try {
             const response = await this.notion.pages.update({
                 page_id: id,
-                properties: this.pantryItemToNotionProperties(item)
+                properties: this.pantryItemToNotionProperties({ ...item, aiModified: true })
             });
 
             return this.notionPageToPantryItem(response);
@@ -220,7 +750,7 @@ export class NotionPantryService {
         try {
             await this.notion.pages.update({
                 page_id: id,
-                archived: true
+                archived: true,
             });
         } catch (error) {
             console.error(`Error deleting pantry item ${id}:`, error);
@@ -230,9 +760,199 @@ export class NotionPantryService {
 
     // ====== RECIPE METHODS ======
 
+    // In src/services/notionPantryService.ts
+
     /**
- * Get all recipes
- */
+     * Find recipes that can be made with the available pantry items using relations
+     * This is a more accurate version that uses the ingredient relations
+     */
+    async findRecipesUsingRelations(pantryItems: PantryItem[], options: {
+        maxResults?: number;
+        includePartialMatches?: boolean;
+        requiredMatchPercentage?: number;
+        filterByTags?: string[];
+    } = {}): Promise<{
+        recipe: Recipe;
+        matchPercentage: number;
+        missingIngredients: Array<{
+            name: string;
+            needed: number;
+            have: number;
+            unit: string;
+        }>;
+        availableIngredients: Array<{
+            name: string;
+            needed: number;
+            have: number;
+            unit: string;
+        }>;
+    }[]> {
+        // Set default options
+        const {
+            maxResults = 10,
+            includePartialMatches = true,
+            requiredMatchPercentage = 0.7, // 70% match required by default
+            filterByTags = []
+        } = options;
+
+        // If relations aren't available, fall back to the old method
+        if (this.useDummyData || !this.recipeIngredientsDbId || !this.ingredientsDbId) {
+            return this.suggestMeals(pantryItems, maxResults);
+        }
+
+        try {
+            // Get all recipes
+            let recipes = await this.getRecipes();
+
+            // Filter by tags if provided
+            if (filterByTags.length > 0) {
+                recipes = recipes.filter(recipe =>
+                    filterByTags.some(tag => recipe.tags.includes(tag))
+                );
+            }
+
+            // Create a lookup map for pantry items by name (case insensitive)
+            const pantryItemsMap = new Map<string, PantryItem>();
+            for (const item of pantryItems) {
+                pantryItemsMap.set(item.name.toLowerCase(), item);
+            }
+
+            // Array to store results
+            const results: Array<{
+                recipe: Recipe;
+                matchPercentage: number;
+                missingIngredients: Array<{
+                    name: string;
+                    needed: number;
+                    have: number;
+                    unit: string;
+                }>;
+                availableIngredients: Array<{
+                    name: string;
+                    needed: number;
+                    have: number;
+                    unit: string;
+                }>;
+            }> = [];
+
+            // Process each recipe
+            for (const recipe of recipes) {
+                // Get the ingredients for this recipe
+                const relations = await this.getRecipeIngredientRelations(recipe.id);
+
+                if (relations.length === 0) {
+                    // Skip recipes with no relations
+                    continue;
+                }
+
+                // Get the ingredients from the relations
+                const ingredientIds = relations.map(relation => relation.ingredientId);
+                const ingredients = await Promise.all(
+                    ingredientIds.map(id => this.getIngredientById(id))
+                );
+
+                // Remove any null values (ingredients that couldn't be found)
+                const validIngredients = ingredients.filter(Boolean) as Ingredient[];
+
+                // Match the recipe relations with pantry items
+                const missingIngredients: Array<{
+                    name: string;
+                    needed: number;
+                    have: number;
+                    unit: string;
+                }> = [];
+
+                const availableIngredients: Array<{
+                    name: string;
+                    needed: number;
+                    have: number;
+                    unit: string;
+                }> = [];
+
+                // Track required ingredients (non-optional)
+                const requiredRelations = relations.filter(relation => !relation.isOptional);
+                let matchedCount = 0;
+
+                // Check each required ingredient relation
+                for (const relation of requiredRelations) {
+                    // Find the corresponding ingredient
+                    const ingredient = validIngredients.find(ing => ing.id === relation.ingredientId);
+
+                    if (!ingredient) {
+                        // Skip if ingredient not found (shouldn't happen but just to be safe)
+                        continue;
+                    }
+
+                    // Check if we have this ingredient in the pantry
+                    const pantryItem = pantryItemsMap.get(ingredient.name.toLowerCase());
+
+                    if (pantryItem) {
+                        // We have this ingredient, check if we have enough
+                        const haveQuantity = pantryItem.quantity;
+                        const needQuantity = relation.quantity;
+
+                        // Ideally we'd convert units here, but for simplicity we'll just check if we have more than we need
+                        if (haveQuantity >= needQuantity) {
+                            // We have enough
+                            matchedCount++;
+
+                            availableIngredients.push({
+                                name: ingredient.name,
+                                needed: needQuantity,
+                                have: haveQuantity,
+                                unit: relation.unit
+                            });
+                        } else {
+                            // We have some but not enough
+                            missingIngredients.push({
+                                name: ingredient.name,
+                                needed: needQuantity,
+                                have: haveQuantity,
+                                unit: relation.unit
+                            });
+                        }
+                    } else {
+                        // We don't have this ingredient at all
+                        missingIngredients.push({
+                            name: ingredient.name,
+                            needed: relation.quantity,
+                            have: 0,
+                            unit: relation.unit
+                        });
+                    }
+                }
+
+                // Calculate match percentage
+                const matchPercentage = requiredRelations.length > 0
+                    ? matchedCount / requiredRelations.length
+                    : 0;
+
+                // Add to results if it meets the criteria
+                if (matchPercentage >= requiredMatchPercentage || includePartialMatches) {
+                    results.push({
+                        recipe,
+                        matchPercentage,
+                        missingIngredients,
+                        availableIngredients
+                    });
+                }
+            }
+
+            // Sort by match percentage (highest first)
+            results.sort((a, b) => b.matchPercentage - a.matchPercentage);
+
+            // Return the top results
+            return results.slice(0, maxResults);
+        } catch (error) {
+            console.error('Error finding recipes using relations:', error);
+            // Fall back to the old method if there's an error
+            return this.suggestMeals(pantryItems, maxResults);
+        }
+    }
+
+    /**
+    * Get all recipes
+    */
     async getRecipes(): Promise<Recipe[]> {
         if (this.useDummyData) {
             return this.getDummyRecipes();
@@ -391,7 +1111,8 @@ export class NotionPantryService {
                     properties: {
                         'Tried?': {
                             checkbox: true
-                        }
+                        },
+                        'AI Modified': { checkbox: true }
                     }
                 });
 
@@ -564,7 +1285,7 @@ export class NotionPantryService {
                 parent: {
                     database_id: this.shoppingListDbId
                 },
-                properties: this.shoppingListItemToNotionProperties(item)
+                properties: this.shoppingListItemToNotionProperties({ ...item, aiModified: true })
             });
 
             return this.notionPageToShoppingListItem(response);
@@ -592,7 +1313,7 @@ export class NotionPantryService {
         try {
             const response = await this.notion.pages.update({
                 page_id: id,
-                properties: this.shoppingListItemToNotionProperties(item)
+                properties: this.shoppingListItemToNotionProperties({ ...item, aiModified: true })
             });
 
             return this.notionPageToShoppingListItem(response);
@@ -651,7 +1372,7 @@ export class NotionPantryService {
                 // Remove from shopping list (archive in Notion)
                 await this.notion.pages.update({
                     page_id: item.id,
-                    archived: true
+                    archived: true,
                 });
             }
         } catch (error) {
@@ -771,6 +1492,12 @@ export class NotionPantryService {
             };
         }
 
+        if (item.aiModified !== undefined) {
+            properties['AI Modified'] = {
+                checkbox: item.aiModified
+            };
+        }
+
         return properties;
     }
 
@@ -862,6 +1589,12 @@ export class NotionPantryService {
                         }
                     }
                 ] : []
+            };
+        }
+
+        if (item.aiModified !== undefined) {
+            properties['AI Modified'] = {
+                checkbox: item.aiModified
             };
         }
 

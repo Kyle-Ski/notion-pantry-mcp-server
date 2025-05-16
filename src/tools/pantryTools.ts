@@ -114,8 +114,121 @@ export function registerPantryTools(
         }
     );
 
+    server.tool(
+        "addNewRecipe",
+        "Add a new recipe to your Notion recipes database",
+        {
+            name: z.string().describe("Name of the recipe"),
+            ingredients: z.array(z.object({
+                name: z.string().describe("Ingredient name"),
+                quantity: z.number().describe("Quantity needed"),
+                unit: z.string().describe("Unit of measurement"),
+                isOptional: z.boolean().optional().default(false).describe("Whether this ingredient is optional"),
+                preparation: z.string().optional().describe("Preparation instructions (e.g., 'chopped', 'minced')")
+            })).describe("List of ingredients required for the recipe"),
+            instructions: z.string().describe("Step-by-step cooking instructions"),
+            tags: z.array(z.string()).optional().describe("Tags for categorizing the recipe (e.g., 'Breakfast', 'Vegetarian')"),
+            prepTime: z.number().optional().describe("Preparation time in minutes"),
+            cookTime: z.number().optional().describe("Cooking time in minutes"),
+            useIngredientRelations: z.boolean().optional().default(true).describe("Whether to create ingredient relations")
+        },
+        async ({ name, ingredients, instructions, tags, prepTime, cookTime, useIngredientRelations }) => {
+            try {
+                // Format the ingredients list as a string for the legacy field
+                const ingredientsText = ingredients
+                    .map(ing => `${ing.quantity} ${ing.unit} ${ing.name}${ing.isOptional ? ' (optional)' : ''}${ing.preparation ? ` (${ing.preparation})` : ''}`)
+                    .join('\n');
+
+                // Add the recipe to Notion
+                const recipe = await notionService.addRecipe({
+                    name,
+                    ingredients: ingredientsText,
+                    instructions,
+                    tags,
+                    prepTime,
+                    cookTime,
+                    aiModified: true // Mark as AI modified
+                });
+
+                // If ingredient relations are enabled
+                if (useIngredientRelations) {
+
+                    // For each ingredient in the recipe
+                    const ingredientResults = [];
+                    for (const ingredientData of ingredients) {
+                        try {
+                            // First, check if the ingredient already exists
+                            const allIngredients = await notionService.getIngredients();
+                            let ingredient = allIngredients.find(i =>
+                                i.name.toLowerCase() === ingredientData.name.toLowerCase());
+
+                            // If not, create it
+                            if (!ingredient) {
+                                ingredient = await notionService.addIngredient({
+                                    name: ingredientData.name,
+                                    units: [ingredientData.unit],
+                                    category: 'Other', // Default category
+                                    perishable: false, // Default value
+                                    storage: 'Pantry', // Default storage location
+                                    aiModified: true
+                                });
+                            }
+
+                            // Now create the relation between recipe and ingredient
+                            const relation = await notionService.addRecipeIngredientRelation({
+                                recipeId: recipe.id,
+                                ingredientId: ingredient.id,
+                                quantity: ingredientData.quantity,
+                                unit: ingredientData.unit,
+                                isOptional: ingredientData.isOptional || false,
+                                preparation: ingredientData.preparation,
+                                aiModified: true
+                            });
+
+                            ingredientResults.push({
+                                name: ingredientData.name,
+                                status: 'added',
+                                relationId: relation.id
+                            });
+                        } catch (error) {
+                            console.error(`Error adding ingredient relation for ${ingredientData.name}:`, error);
+                            ingredientResults.push({
+                                name: ingredientData.name,
+                                status: 'error',
+                                error: error instanceof Error ? error.message : String(error)
+                            });
+                        }
+                    }
+
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `# Recipe Added Successfully\n\nThe recipe "${name}" has been added to your Notion database with ingredient relations.\n\n## Details\n\n- **Name**: ${recipe.name}\n- **Tags**: ${recipe.tags.join(', ') || 'None'}\n- **Preparation Time**: ${prepTime || 'Not specified'} minutes\n- **Cooking Time**: ${cookTime || 'Not specified'} minutes\n\n## Ingredient Relations\n\n${ingredientResults.map(result => `- ${result.name}: ${result.status === 'added' ? '✅ Added' : '❌ Error: ' + result.error}`).join('\n')}\n\nYou can view this recipe in Notion at: ${recipe.notionUrl || '[URL not available]'}`
+                        }]
+                    };
+                } else {
+                    // Original response without relations
+                    return {
+                        content: [{
+                            type: "text",
+                            text: `# Recipe Added Successfully\n\nThe recipe "${name}" has been added to your Notion database.\n\n## Details\n\n- **Name**: ${recipe.name}\n- **Tags**: ${recipe.tags.join(', ') || 'None'}\n- **Preparation Time**: ${prepTime || 'Not specified'} minutes\n- **Cooking Time**: ${cookTime || 'Not specified'} minutes\n\nYou can view this recipe in Notion at: ${recipe.notionUrl || '[URL not available]'}`
+                        }]
+                    };
+                }
+            } catch (error: any) {
+                console.error("Error in addNewRecipe:", error);
+                return {
+                    content: [{
+                        type: "text",
+                        text: `Error adding recipe: ${error.message}`
+                    }]
+                };
+            }
+        }
+    );
+
     /**
-     * Tool: Suggest meals based on available pantry ingredients
+     * Tool: Get pantry and recipes data for meal planning with optional relation support
      */
     server.tool(
         "getPantryAndRecipes",
@@ -123,31 +236,68 @@ export function registerPantryTools(
         {
             filterByTag: z.string().optional().describe("Filter recipes by a specific tag (e.g., 'Breakfast', 'Easy')"),
             includeTriedOnly: z.boolean().optional().default(false).describe("Only include recipes you've tried before"),
-            maxRecipes: z.number().optional().default(10).describe("Maximum number of recipes to return")
+            maxRecipes: z.number().optional().default(10).describe("Maximum number of recipes to return"),
+            useRelations: z.boolean().optional().default(true).describe("Use ingredient relations for better matching if available")
         },
-        async ({ filterByTag, includeTriedOnly, maxRecipes }) => {
+        async ({ filterByTag, includeTriedOnly, maxRecipes, useRelations }) => {
             try {
                 // Get pantry items
                 const pantryItems = await notionService.getPantryItems();
 
-                // Get recipes with ingredients
-                let recipesWithIngredients = await notionService.getRecipesWithIngredients();
+                let recipeResults;
+                let relationSystemAvailable = false;
 
-                // Apply filters
-                if (filterByTag) {
-                    recipesWithIngredients = recipesWithIngredients.filter(r =>
-                        r.recipe.tags.includes(filterByTag)
-                    );
+                // Check if the relation system is available
+                if (notionService.ingredientsDbId &&
+                    notionService.recipeIngredientsDbId &&
+                    useRelations) {
+                    relationSystemAvailable = true;
+
+                    // Use the relation-based recipe finder
+                    recipeResults = await notionService.findRecipesUsingRelations(pantryItems, {
+                        maxResults: maxRecipes,
+                        includePartialMatches: true,
+                        requiredMatchPercentage: 0.5, // 50% match required
+                        filterByTags: filterByTag ? [filterByTag] : []
+                    });
+
+                    // Filter by tried status if needed
+                    if (includeTriedOnly) {
+                        recipeResults = recipeResults.filter(result => result.recipe.tried);
+                    }
+                } else {
+                    // Use the legacy recipe finder
+                    let recipesWithIngredients = await notionService.getRecipesWithIngredients();
+
+                    // Apply filters
+                    if (filterByTag) {
+                        recipesWithIngredients = recipesWithIngredients.filter(r =>
+                            r.recipe.tags.includes(filterByTag)
+                        );
+                    }
+
+                    if (includeTriedOnly) {
+                        recipesWithIngredients = recipesWithIngredients.filter(r => r.recipe.tried);
+                    }
+
+                    // Limit the number of recipes to avoid overwhelming the LLM
+                    recipesWithIngredients = recipesWithIngredients.slice(0, maxRecipes);
+
+                    // Legacy format
+                    recipeResults = recipesWithIngredients.map(r => ({
+                        recipe: r.recipe,
+                        matchPercentage: 1.0, // Not calculated in legacy mode
+                        missingIngredients: [],
+                        availableIngredients: r.ingredients.map(ing => ({
+                            name: ing.name,
+                            needed: ing.quantity,
+                            have: 0, // Not calculated in legacy mode
+                            unit: ing.unit
+                        }))
+                    }));
                 }
 
-                if (includeTriedOnly) {
-                    recipesWithIngredients = recipesWithIngredients.filter(r => r.recipe.tried);
-                }
-
-                // Limit the number of recipes to avoid overwhelming the LLM
-                recipesWithIngredients = recipesWithIngredients.slice(0, maxRecipes);
-
-                // Format the data for the LLM to process
+                // Format the response for the LLM
                 const response = {
                     pantry: pantryItems.map(item => ({
                         name: item.name,
@@ -157,23 +307,29 @@ export function registerPantryTools(
                         expiry: item.expiryDate
                     })),
 
-                    recipes: recipesWithIngredients.map(r => ({
-                        id: r.recipe.id,
-                        name: r.recipe.name,
-                        tried: r.recipe.tried,
-                        tags: r.recipe.tags,
-                        link: r.recipe.link,
-                        notionUrl: r.recipe.notionUrl, // Add Notion URL here
-                        ingredients: r.ingredients.map(ing => ({
-                            name: ing.name,
-                            quantity: ing.quantity,
-                            unit: ing.unit,
-                            optional: ing.isOptional
-                        }))
-                    }))
+                    recipes: recipeResults.map(result => ({
+                        id: result.recipe.id,
+                        name: result.recipe.name,
+                        tried: result.recipe.tried,
+                        tags: result.recipe.tags,
+                        link: result.recipe.link,
+                        notionUrl: result.recipe.notionUrl,
+                        matchPercentage: result.matchPercentage,
+                        canMake: result.matchPercentage === 1.0, // Perfect match
+                        missingIngredients: result.missingIngredients,
+                        availableIngredients: result.availableIngredients
+                    })),
+
+                    relationSystemAvailable,
+
+                    metadata: {
+                        pantryItemCount: pantryItems.length,
+                        recipeCount: recipeResults.length,
+                        filterByTag,
+                        includeTriedOnly
+                    }
                 };
 
-                // Return structured data for the LLM to reason about
                 return {
                     content: [{
                         type: "text",
