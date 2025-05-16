@@ -19,6 +19,7 @@ Built on Cloudflare Workers with the Model Context Protocol (MCP), this server e
 - **Pantry Management**: View, add, update, and organize pantry items
 - **Recipe Suggestions**: Get meal recommendations based on your available ingredients
 - **Shopping List Management**: Maintain a dynamic shopping list with automatic additions
+- **Setup Wizard**: Includes a setup script that will create databases and relations needed
 - **Intelligent Updates**: After cooking a meal, automatically update pantry quantities and add depleted items to shopping list
 - **Direct Notion Integration**: All changes sync directly with your Notion databases with links back to the source pages
 - **Recipe Ingredient Relations**: Smart ingredient tracking with categorization, storage recommendations (WIP), and recipe relations (_this helps with recomendations of meals if you want to use your own recipes_)
