@@ -2,6 +2,7 @@ import { Client } from '@notionhq/client';
 import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
+import readline from 'readline';
 
 // Get the directory path
 const __filename = fileURLToPath(import.meta.url);
@@ -10,315 +11,483 @@ const __dirname = dirname(__filename);
 // Load environment variables properly
 dotenv.config({ path: resolve(__dirname, '../.env') });
 
-// Check if the token exists
-if (!process.env.NOTION_TOKEN) {
-  console.error("ERROR: No Notion token found in .env file");
-  console.error("Please add NOTION_TOKEN=your_integration_token to your .env file");
-  process.exit(1);
-}
-
-// Debug: Print out the environment variables (redacted for security)
-console.log('Environment Variables:');
-console.log(`NOTION_TOKEN: ${process.env.NOTION_TOKEN ? '✓ Found' : '✗ Missing'}`);
-console.log(`NOTION_PANTRY_PAGE: ${process.env.NOTION_PANTRY_PAGE || '✗ Missing'}`);
-console.log(`NOTION_SHOPPING_LIST_PAGE: ${process.env.NOTION_SHOPPING_LIST_PAGE || '✗ Missing'}`);
-console.log(`NOTION_RECIPES_DB: ${process.env.NOTION_RECIPES_DB || '✗ Missing'}`);
-
-// Initialize the Notion client
-const notion = new Client({
-  auth: process.env.NOTION_TOKEN
+// Initialize the RL interface for prompts
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
 });
 
-// Page IDs for your existing pages
-const PANTRY_PAGE_ID = process.env.NOTION_PANTRY_PAGE;
-const SHOPPING_LIST_PAGE_ID = process.env.NOTION_SHOPPING_LIST_PAGE;
-
-// Check required variables
-if (!PANTRY_PAGE_ID) {
-  console.error("ERROR: No Pantry page ID found in .env file");
-  console.error("Please add NOTION_PANTRY_PAGE=your_page_id to your .env file");
-  process.exit(1);
+// Promisify the readline question
+function question(query) {
+  return new Promise(resolve => {
+    rl.question(query, resolve);
+  });
 }
 
-if (!SHOPPING_LIST_PAGE_ID) {
-  console.error("ERROR: No Shopping List page ID found in .env file");
-  console.error("Please add NOTION_SHOPPING_LIST_PAGE=your_page_id to your .env file");
-  process.exit(1);
-}
+// Load database schemas
+import {
+  PANTRY_DATABASE_SCHEMA,
+  SHOPPING_LIST_DATABASE_SCHEMA,
+  INGREDIENTS_DATABASE_SCHEMA,
+  RECIPE_INGREDIENTS_SCHEMA
+} from '../src/types/notionSchema.js';
 
-// Database schemas
-const PANTRY_DATABASE_SCHEMA = {
-  Name: {
-    type: 'title',
-    description: 'The name of the pantry item'
-  },
-  Quantity: {
-    type: 'number',
-    description: 'The quantity of the item',
-    format: 'number'
-  },
-  Unit: {
-    type: 'select',
-    description: 'The unit of measurement',
-    options: [
-      'count', 'oz', 'pounds', 'grams', 'kilograms', 
-      'cups', 'tablespoons', 'teaspoons', 
-      'milliliters', 'liters', 'gallons', 'quarts',
-      'slices', 'loaf', 'bunch', 'bulb', 'head',
-      'can', 'box', 'package', 'bottle'
-    ]
-  },
-  Category: {
-    type: 'select',
-    description: 'The category of the item',
-    options: [
-      'Produce', 'Dairy & Eggs', 'Meat & Seafood',
-      'Bakery', 'Grains', 'Canned Goods', 'Frozen',
-      'Snacks', 'Beverages', 'Condiments & Sauces',
-      'Baking & Spices', 'Other'
-    ]
-  },
-  Location: {
-    type: 'select',
-    description: 'Where the item is stored',
-    options: [
-      'Refrigerator', 'Freezer', 'Pantry', 
-      'Cabinet', 'Spice Rack', 'Counter'
-    ]
-  },
-  Expiry: {
-    type: 'date',
-    description: 'The expiry date of the item'
-  },
-  Notes: {
-    type: 'rich_text',
-    description: 'Additional notes about the item'
-  },
-  Staple: {
-    type: 'checkbox',
-    description: 'Whether this is a staple item to always keep in stock'
-  },
-  Tags: {
-    type: 'multi_select',
-    description: 'Tags for filtering and organizing',
-    options: [
-      'Organic', 'Gluten-Free', 'Dairy-Free', 
-      'Vegan', 'Vegetarian', 'Low-Carb', 'Keto',
-      'Paleo', 'Breakfast', 'Lunch', 'Dinner', 'Snack'
-    ]
-  },
-  MinQuantity: {
-    type: 'number',
-    description: 'The minimum quantity to maintain for staple items',
-    format: 'number'
-  }
-};
-
-const SHOPPING_LIST_DATABASE_SCHEMA = {
-  Name: {
-    type: 'title',
-    description: 'The name of the item to purchase'
-  },
-  Quantity: {
-    type: 'number',
-    description: 'The quantity to purchase',
-    format: 'number'
-  },
-  Unit: {
-    type: 'select',
-    description: 'The unit of measurement',
-    options: [
-      'count', 'oz', 'pounds', 'grams', 'kilograms', 
-      'cups', 'tablespoons', 'teaspoons', 
-      'milliliters', 'liters', 'gallons', 'quarts',
-      'slices', 'loaf', 'bunch', 'bulb', 'head',
-      'can', 'box', 'package', 'bottle'
-    ]
-  },
-  Category: {
-    type: 'select',
-    description: 'The category for shopping organization',
-    options: [
-      'Produce', 'Dairy & Eggs', 'Meat & Seafood',
-      'Bakery', 'Grains', 'Canned Goods', 'Frozen',
-      'Snacks', 'Beverages', 'Condiments & Sauces',
-      'Baking & Spices', 'Other'
-    ]
-  },
-  Priority: {
-    type: 'select',
-    description: 'The priority of the purchase',
-    options: ['Low', 'Medium', 'High']
-  },
-  Purchased: {
-    type: 'checkbox',
-    description: 'Whether the item has been purchased'
-  },
-  AutoAdded: {
-    type: 'checkbox',
-    description: 'Whether the item was automatically added from staples'
-  },
-  Notes: {
-    type: 'rich_text',
-    description: 'Additional notes about the purchase'
-  }
-};
-
-async function main() {
+/**
+ * Create a new top-level Notion page
+ */
+async function createNotionPage(notion, title, icon = '🍽️') {
   try {
-    console.log('Setting up databases for Pantry MCP Server on existing pages...');
+    console.log(`Creating a new Notion page: "${title}"...`);
 
-    // Check if the provided page IDs exist
-    console.log(`Checking page ID: ${PANTRY_PAGE_ID}...`);
-    try {
-      await notion.pages.retrieve({ page_id: PANTRY_PAGE_ID });
-      console.log('Pantry page exists!');
-    } catch (error) {
-      console.error(`Error: Could not find page with ID ${PANTRY_PAGE_ID}`);
-      console.error('Please check your .env file and make sure the page exists and your integration has access to it.');
-      console.error(error);
-      return;
-    }
+    const response = await notion.pages.create({
+      parent: {
+        type: "workspace",
+        workspace: true
+      },
+      icon: {
+        type: "emoji",
+        emoji: icon
+      },
+      properties: {
+        title: {
+          title: [{
+            text: { content: title }
+          }]
+        }
+      },
+      children: [
+        {
+          object: "block",
+          type: "heading_2",
+          heading_2: {
+            rich_text: [{
+              type: "text",
+              text: { content: "AI Pantry Management System" }
+            }]
+          }
+        },
+        {
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [{
+              type: "text",
+              text: { content: "This page contains your pantry management databases managed by the AI Pantry MCP server." }
+            }]
+          }
+        }
+      ]
+    });
 
-    console.log(`Checking page ID: ${SHOPPING_LIST_PAGE_ID}...`);
-    try {
-      await notion.pages.retrieve({ page_id: SHOPPING_LIST_PAGE_ID });
-      console.log('Shopping List page exists!');
-    } catch (error) {
-      console.error(`Error: Could not find page with ID ${SHOPPING_LIST_PAGE_ID}`);
-      console.error('Please check your .env file and make sure the page exists and your integration has access to it.');
-      console.error(error);
-      return;
-    }
-
-    // Step 1: Create Pantry database on existing page
-    console.log('Creating Pantry database on existing page...');
-    const pantryDb = await createPantryDatabase(PANTRY_PAGE_ID);
-    console.log(`Pantry database created with ID: ${pantryDb.id}`);
-    console.log(`Update your .env file with: NOTION_PANTRY_PAGE=${pantryDb.id}`);
-
-    // Step 2: Create Shopping List database on existing page
-    console.log('Creating Shopping List database on existing page...');
-    const shoppingDb = await createShoppingListDatabase(SHOPPING_LIST_PAGE_ID);
-    console.log(`Shopping List database created with ID: ${shoppingDb.id}`);
-    console.log(`Update your .env file with: NOTION_SHOPPING_LIST_PAGE=${shoppingDb.id}`);
-
-    console.log('Database setup complete!');
+    console.log(`✅ Created new Notion page: "${title}" (ID: ${response.id})`);
+    return response.id;
   } catch (error) {
-    console.error('Error setting up Notion databases:', error);
-    console.error(error.stack);
+    console.error(`Error creating Notion page "${title}":`, error);
+    throw error;
   }
 }
 
-// Function to create the Pantry database on an existing page
-async function createPantryDatabase(pageId) {
-  const databaseProperties = {};
-  
-  // Convert our schema definition to Notion API format
-  for (const [name, config] of Object.entries(PANTRY_DATABASE_SCHEMA)) {
+/**
+ * Verify if a Notion page exists and is accessible
+ */
+async function verifyPageExists(notion, pageId, pageName = "Notion page") {
+  try {
+    console.log(`Checking if ${pageName} (ID: ${pageId}) exists...`);
+    await notion.pages.retrieve({ page_id: pageId });
+    console.log(`✅ ${pageName} exists and is accessible!`);
+    return true;
+  } catch (error) {
+    console.error(`❌ Error: Could not find or access ${pageName} with ID ${pageId}`);
+    if (error.status === 404) {
+      console.error('The page does not exist or your integration does not have access to it.');
+    } else {
+      console.error('Error details:', error.message);
+    }
+    return false;
+  }
+}
+
+/**
+ * Convert Notion schema to Notion API properties format
+ */
+function convertSchemaToNotionProperties(schema) {
+  const properties = {};
+
+  for (const [name, config] of Object.entries(schema)) {
     switch (config.type) {
       case 'title':
-        databaseProperties[name] = { title: {} };
+        properties[name] = { title: {} };
         break;
       case 'rich_text':
-        databaseProperties[name] = { rich_text: {} };
+        properties[name] = { rich_text: {} };
         break;
       case 'number':
-        databaseProperties[name] = { number: { format: config.format } };
+        properties[name] = { number: { format: config.format } };
         break;
       case 'select':
-        databaseProperties[name] = {
+        properties[name] = {
           select: {
-            options: config.options.map(option => ({ name: option }))
+            options: config.options ? config.options.map(option => ({ name: option })) : []
           }
         };
         break;
       case 'multi_select':
-        databaseProperties[name] = {
+        properties[name] = {
           multi_select: {
-            options: config.options.map(option => ({ name: option }))
+            options: config.options ? config.options.map(option => ({ name: option })) : []
           }
         };
         break;
       case 'date':
-        databaseProperties[name] = { date: {} };
+        properties[name] = { date: {} };
         break;
       case 'checkbox':
-        databaseProperties[name] = { checkbox: {} };
+        properties[name] = { checkbox: {} };
+        break;
+      case 'relation':
+        // Skip relation properties, we'll add these later
         break;
       default:
-        // Skip unknown property types
         console.warn(`Skipping unknown property type: ${config.type} for ${name}`);
     }
   }
-  
-  return await notion.databases.create({
-    parent: {
-      type: "page_id",
-      page_id: pageId
-    },
-    title: [
-      {
-        type: "text",
-        text: {
-          content: "Pantry Items",
-          link: null
-        }
-      }
-    ],
-    properties: databaseProperties
-  });
+
+  return properties;
 }
 
-// Function to create the Shopping List database on an existing page
-async function createShoppingListDatabase(pageId) {
-  const databaseProperties = {};
-  
-  // Convert our schema definition to Notion API format
-  for (const [name, config] of Object.entries(SHOPPING_LIST_DATABASE_SCHEMA)) {
-    switch (config.type) {
-      case 'title':
-        databaseProperties[name] = { title: {} };
-        break;
-      case 'rich_text':
-        databaseProperties[name] = { rich_text: {} };
-        break;
-      case 'number':
-        databaseProperties[name] = { number: { format: config.format } };
-        break;
-      case 'select':
-        databaseProperties[name] = {
-          select: {
-            options: config.options.map(option => ({ name: option }))
-          }
-        };
-        break;
-      case 'checkbox':
-        databaseProperties[name] = { checkbox: {} };
-        break;
-      default:
-        // Skip unknown property types
-        console.warn(`Skipping unknown property type: ${config.type} for ${name}`);
-    }
+/**
+ * Create Pantry database
+ */
+async function createPantryDatabase(notion, pageId) {
+  console.log('\nCreating Pantry database...');
+  const properties = convertSchemaToNotionProperties(PANTRY_DATABASE_SCHEMA);
+
+  try {
+    const response = await notion.databases.create({
+      parent: { type: "page_id", page_id: pageId },
+      title: [{ type: "text", text: { content: "Pantry Items" } }],
+      icon: {
+        type: "emoji",
+        emoji: "🧺"
+      },
+      properties
+    });
+
+    console.log(`✅ Pantry database created with ID: ${response.id}`);
+    console.log(`Update your .env file with: NOTION_PANTRY_DB=${response.id}`);
+
+    return response.id;
+  } catch (error) {
+    console.error('❌ Error creating Pantry database:', error.message);
+    return null;
   }
-  
-  return await notion.databases.create({
-    parent: {
-      type: "page_id",
-      page_id: pageId
-    },
-    title: [
-      {
-        type: "text",
-        text: {
-          content: "Shopping Items",
-          link: null
-        }
-      }
-    ],
-    properties: databaseProperties
-  });
 }
 
-// Run the main function
-main();
+/**
+ * Create Shopping List database
+ */
+async function createShoppingListDatabase(notion, pageId) {
+  console.log('\nCreating Shopping List database...');
+  const properties = convertSchemaToNotionProperties(SHOPPING_LIST_DATABASE_SCHEMA);
+
+  try {
+    const response = await notion.databases.create({
+      parent: { type: "page_id", page_id: pageId },
+      title: [{ type: "text", text: { content: "Shopping Items" } }],
+      icon: {
+        type: "emoji",
+        emoji: "🛒"
+      },
+      properties
+    });
+
+    console.log(`✅ Shopping List database created with ID: ${response.id}`);
+    console.log(`Update your .env file with: NOTION_SHOPPING_LIST_DB=${response.id}`);
+
+    return response.id;
+  } catch (error) {
+    console.error('❌ Error creating Shopping List database:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Create Ingredients database and Recipe-Ingredients relation database
+ */
+async function createIngredientDatabases(notion, pageId, recipesDbId = null) {
+  // First create the Ingredients database
+  console.log('\nCreating Ingredients database...');
+  const ingredientProperties = convertSchemaToNotionProperties(INGREDIENTS_DATABASE_SCHEMA);
+
+  try {
+    const ingredientsDb = await notion.databases.create({
+      parent: { type: "page_id", page_id: pageId },
+      title: [{ type: "text", text: { content: "Recipe Ingredients" } }],
+      icon: {
+        type: "emoji",
+        emoji: "🥕"
+      },
+      properties: ingredientProperties
+    });
+
+    console.log(`✅ Ingredients database created with ID: ${ingredientsDb.id}`);
+    console.log(`Update your .env file with: NOTION_INGREDIENTS_DB=${ingredientsDb.id}`);
+
+    // If we have a recipes database ID, create the relation database
+    if (recipesDbId) {
+      console.log('\nCreating Recipe-Ingredients relation database...');
+
+      // Get base properties without relations
+      const relationProperties = convertSchemaToNotionProperties(RECIPE_INGREDIENTS_SCHEMA);
+
+      // Add relation properties
+      relationProperties['Recipe'] = {
+        relation: {
+          database_id: recipesDbId
+        }
+      };
+
+      relationProperties['Ingredient'] = {
+        relation: {
+          database_id: ingredientsDb.id
+        }
+      };
+
+      const recipeIngredientsDb = await notion.databases.create({
+        parent: { type: "page_id", page_id: pageId },
+        title: [{ type: "text", text: { content: "Recipe-Ingredient Relations" } }],
+        icon: {
+          type: "emoji",
+          emoji: "🔗"
+        },
+        properties: relationProperties
+      });
+
+      console.log(`✅ Recipe-Ingredients relation database created with ID: ${recipeIngredientsDb.id}`);
+      console.log(`Update your .env file with: NOTION_RECIPE_INGREDIENTS_DB=${recipeIngredientsDb.id}`);
+
+      return {
+        ingredientsDbId: ingredientsDb.id,
+        recipeIngredientsDbId: recipeIngredientsDb.id
+      };
+    } else {
+      console.log('⚠️ Note: Recipe-Ingredients relation database was not created because no Recipes database ID was provided.');
+      console.log('You can create it later after adding your Recipes database ID to your .env file.');
+
+      return {
+        ingredientsDbId: ingredientsDb.id,
+        recipeIngredientsDbId: null
+      };
+    }
+  } catch (error) {
+    console.error('❌ Error creating Ingredient databases:', error.message);
+    return {
+      ingredientsDbId: null,
+      recipeIngredientsDbId: null
+    };
+  }
+}
+
+/**
+ * Prompt for confirmation
+ */
+async function promptForConfirmation(message) {
+  const answer = await question(`${message} (y/N) `);
+  return answer.toLowerCase() === 'y';
+}
+
+/**
+ * Main setup wizard function
+ */
+async function setupWizard() {
+  try {
+    console.log('=======================================');
+    console.log('🍽️  AI Pantry Management Setup Wizard');
+    console.log('=======================================');
+
+    // Check for Notion token
+    if (!process.env.NOTION_TOKEN) {
+      console.error("❌ ERROR: No Notion token found in .env file");
+      console.error("Please add NOTION_TOKEN=your_integration_token to your .env file");
+      rl.close();
+      return;
+    }
+
+    // Initialize Notion client
+    const notion = new Client({
+      auth: process.env.NOTION_TOKEN
+    });
+
+    console.log('\n✅ Notion token found. Initializing setup...');
+
+    // Check for or create required pages
+    let mainPageId = process.env.NOTION_PANTRY_PAGE;
+    if (!mainPageId) {
+      console.log('No Pantry page ID found in .env file.');
+      const createNewPage = await promptForConfirmation('Would you like to create a new AI Pantry Management page in Notion?');
+
+      if (createNewPage) {
+        mainPageId = await createNotionPage(notion, "AI Pantry Management");
+        console.log(`Update your .env file with: NOTION_PANTRY_PAGE=${mainPageId}`);
+      } else {
+        console.error("❌ A Pantry page ID is required to continue setup.");
+        rl.close();
+        return;
+      }
+    } else {
+      // Verify the main page exists
+      const pageExists = await verifyPageExists(notion, mainPageId, "AI Pantry Management page");
+      if (!pageExists) {
+        const createNewPage = await promptForConfirmation('Would you like to create a new AI Pantry Management page instead?');
+        if (createNewPage) {
+          mainPageId = await createNotionPage(notion, "AI Pantry Management");
+          console.log(`Update your .env file with: NOTION_PANTRY_PAGE=${mainPageId}`);
+        } else {
+          console.error("❌ A valid Pantry page ID is required to continue setup.");
+          rl.close();
+          return;
+        }
+      }
+    }
+
+    // Get recipes database ID if available
+    const recipesDbId = process.env.NOTION_RECIPES_DB;
+    if (recipesDbId) {
+      console.log('\nRecipes database ID found in .env file.');
+      const recipeDbExists = await verifyPageExists(notion, recipesDbId, "Recipes database");
+      if (!recipeDbExists) {
+        console.log('⚠️ Warning: The Recipes database ID in your .env file appears to be invalid.');
+        console.log('You can still proceed, but recipe-ingredient relations will not be created.');
+      }
+    } else {
+      console.log('\n⚠️ No Recipes database ID found in .env file.');
+      console.log('You can still proceed, but recipe-ingredient relations will not be created.');
+    }
+
+    // Display setup options
+    console.log('\nWhat would you like to set up?');
+    console.log('1. Set up all databases (recommended)');
+    console.log('2. Set up Pantry database only');
+    console.log('3. Set up Shopping List database only');
+    console.log('4. Set up Ingredient databases (Ingredients and Recipe-Ingredients)');
+    console.log('5. Exit setup wizard');
+
+    const choice = await question('\nEnter your choice (1-5): ');
+
+    // Database setup results
+    let pantryDbId = null;
+    let shoppingListDbId = null;
+    let ingredientsDbId = null;
+    let recipeIngredientsDbId = null;
+    let ingredientResults;
+    // Process user choice
+    switch (choice) {
+      case '1': // All databases
+        pantryDbId = await createPantryDatabase(notion, mainPageId);
+        shoppingListDbId = await createShoppingListDatabase(notion, mainPageId);
+        ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
+        ingredientsDbId = ingredientResults.ingredientsDbId;
+        recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+        break;
+
+      case '2': // Pantry only
+        pantryDbId = await createPantryDatabase(notion, mainPageId);
+        break;
+
+      case '3': // Shopping List only
+        shoppingListDbId = await createShoppingListDatabase(notion, mainPageId);
+        break;
+
+      case '4': // Ingredient databases
+        ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
+        ingredientsDbId = ingredientResults.ingredientsDbId;
+        recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+        break;
+
+      case '5': // Exit
+        console.log('Exiting setup wizard...');
+        break;
+
+      default:
+        console.log('❌ Invalid choice. Exiting setup wizard...');
+    }
+
+    // Display setup summary
+    console.log('\n=======================================');
+    console.log('📋 Setup Summary');
+    console.log('=======================================');
+    console.log('Databases created:');
+    console.log(`- Pantry: ${pantryDbId ? '✅' : '❌'}`);
+    console.log(`- Shopping List: ${shoppingListDbId ? '✅' : '❌'}`);
+    console.log(`- Ingredients: ${ingredientsDbId ? '✅' : '❌'}`);
+    console.log(`- Recipe-Ingredient Relations: ${recipeIngredientsDbId ? '✅' : '❌'}`);
+
+    // Provide next steps
+    if (pantryDbId || shoppingListDbId || ingredientsDbId || recipeIngredientsDbId) {
+      console.log('\n🔄 Next Steps:');
+      console.log('1. Update your .env file with the database IDs listed above');
+      console.log('2. Update your wrangler.toml file with the same values');
+      console.log('3. Deploy your server using `npm run deploy`');
+    }
+
+    console.log('\n✨ Setup wizard complete! ✨');
+  } catch (error) {
+    console.error('❌ Error during setup:', error);
+  } finally {
+    rl.close();
+  }
+}
+
+// For future web UI integration, export modular functions
+export {
+  createNotionPage,
+  verifyPageExists,
+  createPantryDatabase,
+  createShoppingListDatabase,
+  createIngredientDatabases
+};
+
+// Non-interactive setup function for web UI
+export async function setupDatabases(options) {
+  const {
+    notionToken,
+    mainPageId,
+    createPantry = false,
+    createShoppingList = false,
+    createIngredients = false,
+    recipesDbId = null
+  } = options;
+
+  // Initialize Notion client
+  const notion = new Client({ auth: notionToken });
+
+  // Track created database IDs
+  const results = {
+    pantryDbId: null,
+    shoppingListDbId: null,
+    ingredientsDbId: null,
+    recipeIngredientsDbId: null
+  };
+
+  // Create databases based on options
+  if (createPantry) {
+    results.pantryDbId = await createPantryDatabase(notion, mainPageId);
+  }
+
+  if (createShoppingList) {
+    results.shoppingListDbId = await createShoppingListDatabase(notion, mainPageId);
+  }
+
+  if (createIngredients) {
+    const ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
+    results.ingredientsDbId = ingredientResults.ingredientsDbId;
+    results.recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+  }
+
+  return results;
+}
+
+// Run the setup wizard when this script is executed directly
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  setupWizard();
+}

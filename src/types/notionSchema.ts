@@ -89,7 +89,6 @@ export const RECIPES_DATABASE_SCHEMA = {
     RecipeIngredients: {
         type: 'relation',
         description: 'Relations to ingredient items with quantities',
-        collection_id: '' // Will be filled in with the recipe ingredients database ID
     },
     Instructions: {
         type: 'rich_text',
@@ -273,13 +272,11 @@ export const RECIPE_INGREDIENTS_SCHEMA = {
     },
     Recipe: {
         type: 'relation',
-        description: 'Related recipe',
-        collection_id: '' // Will be filled in with the recipe database ID
+        description: 'Related recipe'
     },
     Ingredient: {
         type: 'relation',
-        description: 'Related ingredient',
-        collection_id: '' // Will be filled in with the ingredients database ID
+        description: 'Related ingredient'
     },
     Quantity: {
         type: 'number',

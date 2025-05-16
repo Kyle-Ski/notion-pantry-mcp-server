@@ -248,8 +248,7 @@ export function registerPantryTools(
                 let relationSystemAvailable = false;
 
                 // Check if the relation system is available
-                if (notionService.ingredientsDbId &&
-                    notionService.recipeIngredientsDbId &&
+                if (notionService.hasRelationSystem &&
                     useRelations) {
                     relationSystemAvailable = true;
 

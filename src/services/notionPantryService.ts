@@ -39,6 +39,29 @@ export class NotionPantryService {
         console.log(`NotionPantryService initialized with${useDummyData ? ' dummy data' : ' real Notion connection'}`);
     }
 
+    // Public getters to check if certain databases are available
+
+    /**
+     * Check if the ingredients database is available
+     */
+    public get hasIngredientsDb(): boolean {
+        return !this.useDummyData && !!this.ingredientsDbId;
+    }
+
+    /**
+     * Check if the recipe-ingredients database is available
+     */
+    public get hasRecipeIngredientsDb(): boolean {
+        return !this.useDummyData && !!this.recipeIngredientsDbId;
+    }
+
+    /**
+     * Check if the relation system (both ingredients and recipe-ingredients DBs) is available
+     */
+    public get hasRelationSystem(): boolean {
+        return this.hasIngredientsDb && this.hasRecipeIngredientsDb;
+    }
+
     /**
      * Helps detect the user's database structure for our MCP server and setup wizard
      */
@@ -760,12 +783,10 @@ export class NotionPantryService {
 
     // ====== RECIPE METHODS ======
 
-    // In src/services/notionPantryService.ts
-
     /**
-     * Find recipes that can be made with the available pantry items using relations
-     * This is a more accurate version that uses the ingredient relations
-     */
+    * Find recipes that can be made with the available pantry items using relations
+    * This is a more accurate version that uses the ingredient relations
+    */
     async findRecipesUsingRelations(pantryItems: PantryItem[], options: {
         maxResults?: number;
         includePartialMatches?: boolean;
@@ -796,8 +817,24 @@ export class NotionPantryService {
         } = options;
 
         // If relations aren't available, fall back to the old method
-        if (this.useDummyData || !this.recipeIngredientsDbId || !this.ingredientsDbId) {
-            return this.suggestMeals(pantryItems, maxResults);
+        if (this.useDummyData || !this.hasRelationSystem) {
+            // Convert from the old format to the new format
+            const oldFormatResults = await this.suggestMeals(pantryItems, maxResults);
+
+            return oldFormatResults.map(result => {
+                // Create a compatibility layer
+                return {
+                    recipe: result.recipe,
+                    matchPercentage: 1.0, // Not calculated in the old format
+                    missingIngredients: [],  // Not calculated in the old format
+                    availableIngredients: result.ingredients.map(ing => ({
+                        name: ing.name,
+                        needed: ing.quantity,
+                        have: 0, // Not calculated in the old format 
+                        unit: ing.unit
+                    }))
+                };
+            });
         }
 
         try {
@@ -946,7 +983,21 @@ export class NotionPantryService {
         } catch (error) {
             console.error('Error finding recipes using relations:', error);
             // Fall back to the old method if there's an error
-            return this.suggestMeals(pantryItems, maxResults);
+            const oldFormatResults = await this.suggestMeals(pantryItems, maxResults);
+
+            return oldFormatResults.map(result => {
+                return {
+                    recipe: result.recipe,
+                    matchPercentage: 1.0,
+                    missingIngredients: [],
+                    availableIngredients: result.ingredients.map(ing => ({
+                        name: ing.name,
+                        needed: ing.quantity,
+                        have: 0,
+                        unit: ing.unit
+                    }))
+                };
+            });
         }
     }
 
