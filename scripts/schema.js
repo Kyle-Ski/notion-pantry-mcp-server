@@ -1,4 +1,9 @@
 /**
+ * schemas.js - JavaScript version of database schemas for Notion
+ * This file contains schema definitions used by the setup scripts.
+ */
+
+/**
  * Definition of our Notion Pantry Database schema
  * This helps document the expected structure and property types
  */
@@ -69,7 +74,7 @@ export const PANTRY_DATABASE_SCHEMA = {
     },
     'AI Modified': {
         type: 'checkbox',
-        description: 'Whether this recipe was added or modified by AI'
+        description: 'Whether this item was added or modified by AI'
     }
 };
 
@@ -84,11 +89,11 @@ export const RECIPES_DATABASE_SCHEMA = {
     },
     Ingredients: {
         type: 'rich_text',
-        description: 'The ingredients required for the recipe'
+        description: 'The ingredients required for the recipe (legacy format)'
     },
     RecipeIngredients: {
         type: 'relation',
-        description: 'Relations to ingredient items with quantities',
+        description: 'Relations to ingredient items with quantities'
     },
     Instructions: {
         type: 'rich_text',
@@ -140,6 +145,10 @@ export const RECIPES_DATABASE_SCHEMA = {
     Notes: {
         type: 'rich_text',
         description: 'Additional notes, variations, or tips'
+    },
+    'Tried?': {
+        type: 'checkbox',
+        description: 'Whether you have tried making this recipe'
     },
     'AI Modified': {
         type: 'checkbox',
@@ -201,7 +210,7 @@ export const SHOPPING_LIST_DATABASE_SCHEMA = {
     },
     'AI Modified': {
         type: 'checkbox',
-        description: 'Whether this recipe was added or modified by AI'
+        description: 'Whether this item was added or modified by AI'
     }
 };
 

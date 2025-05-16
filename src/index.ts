@@ -15,6 +15,8 @@ export interface Env {
     NOTION_PANTRY_DB: string;               // Notion database ID for pantry
     NOTION_RECIPES_DB: string;              // Notion database ID for Recipes
     NOTION_SHOPPING_LIST_DB: string;        // Notion database ID for Shopping List 
+    NOTION_INGREDIENTS_DB: string;          // Notion database ID for Ingredients
+    NOTION_RECIPE_INGREDIENTS_DB: string;   // Notion database ID for Recipe-Ingredient relations
 }
 
 // Simple state structure for our agent
@@ -24,7 +26,7 @@ type State = {
 };
 
 export class PantryMcpServer extends McpAgent<Env, State> {
-    
+
     server = new McpServer({
         name: "Pantry MCP Server",
         version: "0.1.0",
@@ -46,6 +48,8 @@ export class PantryMcpServer extends McpAgent<Env, State> {
             this.env.NOTION_PANTRY_DB,
             this.env.NOTION_RECIPES_DB,
             this.env.NOTION_SHOPPING_LIST_DB,
+            this.env.NOTION_INGREDIENTS_DB || '',         // May not be available yet
+            this.env.NOTION_RECIPE_INGREDIENTS_DB || '',  // May not be available yet
             false // useDummyData flag - set to true for now
         );
 

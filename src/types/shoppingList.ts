@@ -40,6 +40,9 @@ export interface ShoppingListItem {
 
     // When the item was last updated (maps to Notion Last Edited Time property)
     lastUpdated: string;
+
+    // Was the item created or updated by our LLM?
+    aiModified?: boolean;
 }
 
 /**
@@ -57,7 +60,8 @@ export function notionPageToShoppingListItem(page: any): ShoppingListItem {
         isAutoAdded: page.properties['AutoAdded']?.checkbox || false,
         notes: page.properties['Notes']?.rich_text?.map((rt: any) => rt.plain_text).join('') || '',
         addedAt: page.created_time,
-        lastUpdated: page.last_edited_time
+        lastUpdated: page.last_edited_time,
+        aiModified: page.properties['AI Modified']?.checkbox || false
     };
 }
 

@@ -42,20 +42,72 @@ export interface Recipe {
      * When the recipe was created (maps to Notion "Created On" created_time property)
      */
     createdAt: string;
+
+    /**
+     * Was the item created or updated by our LLM?
+     */
+    aiModified?: boolean;
 }
 
 /**
  * Convert a Notion page to a Recipe object
  */
 export function notionPageToRecipe(page: any): Recipe {
+    // Find the title property (there's always one title property)
+    const titleProp: any = Object.values(page.properties).find((prop: any) => prop.type === 'title');
+    const titleText = titleProp?.title?.[0]?.plain_text || '';
+
+    // Look for checkbox properties that might be the "tried" flag
+    const triedProp: any = Object.entries(page.properties).find(
+        ([name, prop]: [string, any]) =>
+            prop.type === 'checkbox' &&
+            (name.toLowerCase().includes('tried') || name === 'Tried?')
+    );
+    const triedValue = triedProp?.[1]?.checkbox || false;
+
+    // Look for relation properties that might be the kitchen tools
+    const toolsProp: any = Object.entries(page.properties).find(
+        ([name, prop]: [string, any]) =>
+            prop.type === 'relation' &&
+            (name.toLowerCase().includes('tool') || name === 'Kitchen Tools')
+    );
+    const toolsValue = toolsProp?.[1]?.relation?.map((rel: any) => rel.id) || [];
+
+    // Look for URL properties that might be the link
+    const linkProp: any = Object.entries(page.properties).find(
+        ([name, prop]: [string, any]) =>
+            prop.type === 'url' &&
+            (name.toLowerCase().includes('link') || name === 'Link' ||
+                name.toLowerCase().includes('source') || name.toLowerCase().includes('url'))
+    );
+    const linkValue = linkProp?.[1]?.url || '';
+
+    // Look for multi-select properties that might be the tags
+    const tagsProp: any = Object.entries(page.properties).find(
+        ([name, prop]: [string, any]) =>
+            prop.type === 'multi_select' &&
+            (name.toLowerCase().includes('tag') || name === 'Tags')
+    );
+    const tagsValue = tagsProp?.[1]?.multi_select?.map((ms: any) => ms.name) || [];
+
+    // Look for the AI Modified property
+    const aiModifiedProp: any = Object.entries(page.properties).find(
+        ([name, prop]: [string, any]) =>
+            prop.type === 'checkbox' &&
+            (name.toLowerCase().includes('ai') || name === 'AI Modified')
+    );
+    const aiModifiedValue = aiModifiedProp?.[1]?.checkbox || false;
+
+    // Return the recipe object
     return {
         id: page.id,
-        name: page.properties['Name']?.title?.[0]?.plain_text || '',
-        tried: page.properties['Tried?']?.checkbox || false,
-        kitchenTools: page.properties['Kitchen Tools']?.relation?.map((rel: any) => rel.id) || [],
-        link: page.properties['Link']?.url || '',
-        tags: page.properties['Tags']?.multi_select?.map((ms: any) => ms.name) || [],
-        createdAt: page.properties['Created On']?.created_time || '',
+        name: titleText,
+        tried: triedValue,
+        kitchenTools: toolsValue,
+        link: linkValue,
+        tags: tagsValue,
+        aiModified: aiModifiedValue,
+        createdAt: page.created_time
     };
 }
 
@@ -98,6 +150,12 @@ export function recipeToNotionProperties(recipe: Partial<Recipe>): any {
     if (recipe.tags !== undefined) {
         properties['Tags'] = {
             multi_select: recipe.tags.map(tag => ({ name: tag }))
+        };
+    }
+
+    if (recipe.aiModified !== undefined) {
+        properties['AI Modified'] = {
+            checkbox: recipe.aiModified
         };
     }
 
