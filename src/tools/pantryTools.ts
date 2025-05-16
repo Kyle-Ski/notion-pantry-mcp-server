@@ -123,8 +123,11 @@ export function registerPantryTools(
                 name: z.string().describe("Ingredient name"),
                 quantity: z.number().describe("Quantity needed"),
                 unit: z.string().describe("Unit of measurement"),
+                category: z.string().optional().describe("Food category (e.g., 'Produce', 'Dairy & Eggs', 'Meat & Seafood', 'Bakery', etc.)"),
                 isOptional: z.boolean().optional().default(false).describe("Whether this ingredient is optional"),
-                preparation: z.string().optional().describe("Preparation instructions (e.g., 'chopped', 'minced')")
+                preparation: z.string().optional().describe("Preparation instructions (e.g., 'chopped', 'minced')"),
+                perishable: z.boolean().optional().describe("Whether this ingredient is perishable"),
+                storage: z.string().optional().describe("Where this ingredient should be stored (e.g., 'Refrigerator', 'Freezer', 'Pantry', 'Spice Rack', etc.)")
             })).describe("List of ingredients required for the recipe"),
             instructions: z.string().describe("Step-by-step cooking instructions"),
             tags: z.array(z.string()).optional().describe("Tags for categorizing the recipe (e.g., 'Breakfast', 'Vegetarian')"),
@@ -151,7 +154,7 @@ export function registerPantryTools(
                 });
 
                 // If ingredient relations are enabled
-                if (useIngredientRelations) {
+                if (useIngredientRelations && notionService.hasRelationSystem) {
 
                     // For each ingredient in the recipe
                     const ingredientResults = [];
@@ -164,12 +167,27 @@ export function registerPantryTools(
 
                             // If not, create it
                             if (!ingredient) {
+                                // Use provided category or set a reasonable default if missing
+                                const category = ingredientData.category || 'Other';
+
+                                // Use provided perishable status or make a reasonable guess
+                                const perishable = ingredientData.perishable !== undefined
+                                    ? ingredientData.perishable
+                                    : ['Produce', 'Dairy & Eggs', 'Meat & Seafood', 'Bakery'].includes(category);
+
+                                // Use provided storage location or set a reasonable default
+                                const storage = ingredientData.storage ||
+                                    (category === 'Dairy & Eggs' || category === 'Meat & Seafood' ? 'Refrigerator' :
+                                        category === 'Frozen' ? 'Freezer' :
+                                            category === 'Baking & Spices' && ingredientData.name.toLowerCase().includes('spice') ? 'Spice Rack' :
+                                                'Pantry');
+
                                 ingredient = await notionService.addIngredient({
                                     name: ingredientData.name,
                                     units: [ingredientData.unit],
-                                    category: 'Other', // Default category
-                                    perishable: false, // Default value
-                                    storage: 'Pantry', // Default storage location
+                                    category: category,
+                                    perishable: perishable,
+                                    storage: storage,
                                     aiModified: true
                                 });
                             }

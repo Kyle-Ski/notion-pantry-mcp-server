@@ -29,7 +29,8 @@ import {
   PANTRY_DATABASE_SCHEMA,
   SHOPPING_LIST_DATABASE_SCHEMA,
   INGREDIENTS_DATABASE_SCHEMA,
-  RECIPE_INGREDIENTS_SCHEMA
+  RECIPE_INGREDIENTS_SCHEMA,
+  RECIPES_DATABASE_SCHEMA
 } from './schema.js';
 
 /**
@@ -78,9 +79,10 @@ async function createNotionPage(notion, title, icon = '🍽️') {
         }
       ]
     });
-
-    console.log(`✅ Created new Notion page: "${title}" (ID: ${response.id})`);
-    return response.id;
+    
+    const pageId = response.id.replace(/-/g, '');
+    console.log(`✅ Created new Notion page: "${title}" (ID: ${pageId}), url: ${response.url}`);
+    return pageId;
   } catch (error) {
     console.error(`Error creating Notion page "${title}":`, error);
     throw error;
@@ -92,8 +94,11 @@ async function createNotionPage(notion, title, icon = '🍽️') {
  */
 async function verifyPageExists(notion, pageId, pageName = "Notion page") {
   try {
-    console.log(`Checking if ${pageName} (ID: ${pageId}) exists...`);
-    await notion.pages.retrieve({ page_id: pageId });
+    // Remove dashes from page ID if they exist
+    const cleanPageId = pageId.replace(/-/g, '');
+
+    console.log(`Checking if ${pageName} (ID: ${cleanPageId}) exists...`);
+    await notion.pages.retrieve({ page_id: cleanPageId });
     console.log(`✅ ${pageName} exists and is accessible!`);
     return true;
   } catch (error) {
@@ -144,6 +149,21 @@ function convertSchemaToNotionProperties(schema) {
       case 'checkbox':
         properties[name] = { checkbox: {} };
         break;
+      case 'formula':
+        if (config.formula) {
+          properties[name] = {
+            formula: {
+              expression: config.formula
+            }
+          };
+        }
+        break;
+      case 'url':
+        properties[name] = { url: {} };
+        break;
+      case 'files':
+        properties[name] = { files: {} };
+        break;
       case 'relation':
         // Skip relation properties, we'll add these later
         break;
@@ -173,10 +193,11 @@ async function createPantryDatabase(notion, pageId) {
       properties
     });
 
-    console.log(`✅ Pantry database created with ID: ${response.id}`);
-    console.log(`Update your .env file with: NOTION_PANTRY_DB=${response.id}`);
+    const dbId = response.id.replace(/-/g, '');
+    console.log(`✅ Pantry database created with ID: ${dbId}`);
+    console.log(`Update your .env file with: NOTION_PANTRY_DB=${dbId}`);
 
-    return response.id;
+    return dbId;
   } catch (error) {
     console.error('❌ Error creating Pantry database:', error.message);
     return null;
@@ -201,12 +222,42 @@ async function createShoppingListDatabase(notion, pageId) {
       properties
     });
 
-    console.log(`✅ Shopping List database created with ID: ${response.id}`);
-    console.log(`Update your .env file with: NOTION_SHOPPING_LIST_DB=${response.id}`);
+    const dbId = response.id.replace(/-/g, '');
+    console.log(`✅ Shopping List database created with ID: ${dbId}`);
+    console.log(`Update your .env file with: NOTION_SHOPPING_LIST_DB=${dbId}`);
 
-    return response.id;
+    return dbId;
   } catch (error) {
     console.error('❌ Error creating Shopping List database:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Create Recipes database
+ */
+async function createRecipesDatabase(notion, pageId) {
+  console.log('\nCreating Recipes database...');
+  const properties = convertSchemaToNotionProperties(RECIPES_DATABASE_SCHEMA);
+
+  try {
+    const response = await notion.databases.create({
+      parent: { type: "page_id", page_id: pageId },
+      title: [{ type: "text", text: { content: "Recipes" } }],
+      icon: {
+        type: "emoji",
+        emoji: "🍳"
+      },
+      properties
+    });
+
+    const dbId = response.id.replace(/-/g, '');
+    console.log(`✅ Recipes database created with ID: ${dbId}`);
+    console.log(`Update your .env file with: NOTION_RECIPES_DB=${dbId}`);
+
+    return dbId;
+  } catch (error) {
+    console.error('❌ Error creating Recipes database:', error.message);
     return null;
   }
 }
@@ -230,8 +281,9 @@ async function createIngredientDatabases(notion, pageId, recipesDbId = null) {
       properties: ingredientProperties
     });
 
-    console.log(`✅ Ingredients database created with ID: ${ingredientsDb.id}`);
-    console.log(`Update your .env file with: NOTION_INGREDIENTS_DB=${ingredientsDb.id}`);
+    const ingredientsDbId = ingredientsDb.id.replace(/-/g, '');
+    console.log(`✅ Ingredients database created with ID: ${ingredientsDbId}`);
+    console.log(`Update your .env file with: NOTION_INGREDIENTS_DB=${ingredientsDbId}`);
 
     // If we have a recipes database ID, create the relation database
     if (recipesDbId) {
@@ -240,16 +292,21 @@ async function createIngredientDatabases(notion, pageId, recipesDbId = null) {
       // Get base properties without relations
       const relationProperties = convertSchemaToNotionProperties(RECIPE_INGREDIENTS_SCHEMA);
 
-      // Add relation properties
+      // Clean the recipes DB ID (remove dashes if present)
+      const cleanRecipesDbId = recipesDbId.replace(/-/g, '');
+
+      // Add relation properties with the correct format
       relationProperties['Recipe'] = {
         relation: {
-          database_id: recipesDbId
+          database_id: cleanRecipesDbId,
+          single_property: {} // The junction table references recipes one-way
         }
       };
 
       relationProperties['Ingredient'] = {
         relation: {
-          database_id: ingredientsDb.id
+          database_id: ingredientsDbId,
+          single_property: {} // The junction table references ingredients one-way
         }
       };
 
@@ -263,24 +320,26 @@ async function createIngredientDatabases(notion, pageId, recipesDbId = null) {
         properties: relationProperties
       });
 
-      console.log(`✅ Recipe-Ingredients relation database created with ID: ${recipeIngredientsDb.id}`);
-      console.log(`Update your .env file with: NOTION_RECIPE_INGREDIENTS_DB=${recipeIngredientsDb.id}`);
+      const recipeIngredientsDbId = recipeIngredientsDb.id.replace(/-/g, '');
+      console.log(`✅ Recipe-Ingredients relation database created with ID: ${recipeIngredientsDbId}`);
+      console.log(`Update your .env file with: NOTION_RECIPE_INGREDIENTS_DB=${recipeIngredientsDbId}`);
 
       return {
-        ingredientsDbId: ingredientsDb.id,
-        recipeIngredientsDbId: recipeIngredientsDb.id
+        ingredientsDbId,
+        recipeIngredientsDbId
       };
     } else {
       console.log('⚠️ Note: Recipe-Ingredients relation database was not created because no Recipes database ID was provided.');
       console.log('You can create it later after adding your Recipes database ID to your .env file.');
 
       return {
-        ingredientsDbId: ingredientsDb.id,
+        ingredientsDbId,
         recipeIngredientsDbId: null
       };
     }
   } catch (error) {
     console.error('❌ Error creating Ingredient databases:', error.message);
+    console.error('Detailed error:', error);
     return {
       ingredientsDbId: null,
       recipeIngredientsDbId: null
@@ -351,17 +410,17 @@ async function setupWizard() {
     }
 
     // Get recipes database ID if available
-    const recipesDbId = process.env.NOTION_RECIPES_DB;
-    if (recipesDbId) {
+    const existingRecipesDbId = process.env.NOTION_RECIPES_DB;
+    if (existingRecipesDbId) {
       console.log('\nRecipes database ID found in .env file.');
-      const recipeDbExists = await verifyPageExists(notion, recipesDbId, "Recipes database");
+      const recipeDbExists = await verifyPageExists(notion, existingRecipesDbId, "Recipes database");
       if (!recipeDbExists) {
         console.log('⚠️ Warning: The Recipes database ID in your .env file appears to be invalid.');
         console.log('You can still proceed, but recipe-ingredient relations will not be created.');
       }
     } else {
       console.log('\n⚠️ No Recipes database ID found in .env file.');
-      console.log('You can still proceed, but recipe-ingredient relations will not be created.');
+      console.log('You can still proceed with creating a new Recipes database or skip it.');
     }
 
     // Display setup options
@@ -369,25 +428,31 @@ async function setupWizard() {
     console.log('1. Set up all databases (recommended)');
     console.log('2. Set up Pantry database only');
     console.log('3. Set up Shopping List database only');
-    console.log('4. Set up Ingredient databases (Ingredients and Recipe-Ingredients)');
-    console.log('5. Exit setup wizard');
+    console.log('4. Set up Recipes database only');
+    console.log('5. Set up Ingredient databases (Ingredients and Recipe-Ingredients)');
+    console.log('6. Exit setup wizard');
 
-    const choice = await question('\nEnter your choice (1-5): ');
+    const choice = await question('\nEnter your choice (1-6): ');
 
     // Database setup results
     let pantryDbId = null;
     let shoppingListDbId = null;
+    let recipesDbId = null;
     let ingredientsDbId = null;
     let recipeIngredientsDbId = null;
     let ingredientResults;
+
     // Process user choice
     switch (choice) {
       case '1': // All databases
         pantryDbId = await createPantryDatabase(notion, mainPageId);
         shoppingListDbId = await createShoppingListDatabase(notion, mainPageId);
+        recipesDbId = await createRecipesDatabase(notion, mainPageId);
+
+        // Now that we have a recipes database ID, we can create the ingredient databases
         ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
-        ingredientsDbId = ingredientResults.ingredientsDbId;
-        recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+        ingredientsDbId = ingredientResults?.ingredientsDbId;
+        recipeIngredientsDbId = ingredientResults?.recipeIngredientsDbId;
         break;
 
       case '2': // Pantry only
@@ -398,13 +463,33 @@ async function setupWizard() {
         shoppingListDbId = await createShoppingListDatabase(notion, mainPageId);
         break;
 
-      case '4': // Ingredient databases
-        ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
-        ingredientsDbId = ingredientResults.ingredientsDbId;
-        recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+      case '4': // Recipes only
+        recipesDbId = await createRecipesDatabase(notion, mainPageId);
         break;
 
-      case '5': // Exit
+      case '5': // Ingredient databases
+        // If there's a recipes database ID in the env, use it
+        if (!existingRecipesDbId) {
+          console.log('⚠️ No Recipes database ID found. Creating a Recipes database first...');
+          recipesDbId = await createRecipesDatabase(notion, mainPageId);
+
+          if (recipesDbId) {
+            ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
+          } else {
+            console.error('❌ Failed to create Recipes database. Cannot create Ingredient relations.');
+            ingredientResults = await createIngredientDatabases(notion, mainPageId, null);
+          }
+        } else {
+          ingredientResults = await createIngredientDatabases(notion, mainPageId, existingRecipesDbId);
+        }
+
+        if (ingredientResults) {
+          ingredientsDbId = ingredientResults.ingredientsDbId;
+          recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+        }
+        break;
+
+      case '6': // Exit
         console.log('Exiting setup wizard...');
         break;
 
@@ -419,11 +504,12 @@ async function setupWizard() {
     console.log('Databases created:');
     console.log(`- Pantry: ${pantryDbId ? '✅' : '❌'}`);
     console.log(`- Shopping List: ${shoppingListDbId ? '✅' : '❌'}`);
+    console.log(`- Recipes: ${recipesDbId ? '✅' : '❌'}`);
     console.log(`- Ingredients: ${ingredientsDbId ? '✅' : '❌'}`);
     console.log(`- Recipe-Ingredient Relations: ${recipeIngredientsDbId ? '✅' : '❌'}`);
 
     // Provide next steps
-    if (pantryDbId || shoppingListDbId || ingredientsDbId || recipeIngredientsDbId) {
+    if (pantryDbId || shoppingListDbId || recipesDbId || ingredientsDbId || recipeIngredientsDbId) {
       console.log('\n🔄 Next Steps:');
       console.log('1. Update your .env file with the database IDs listed above');
       console.log('2. Update your wrangler.toml file with the same values');
@@ -444,6 +530,7 @@ export {
   verifyPageExists,
   createPantryDatabase,
   createShoppingListDatabase,
+  createRecipesDatabase,
   createIngredientDatabases
 };
 
@@ -454,6 +541,7 @@ export async function setupDatabases(options) {
     mainPageId,
     createPantry = false,
     createShoppingList = false,
+    createRecipes = false,
     createIngredients = false,
     recipesDbId = null
   } = options;
@@ -465,6 +553,7 @@ export async function setupDatabases(options) {
   const results = {
     pantryDbId: null,
     shoppingListDbId: null,
+    recipesDbId: null,
     ingredientsDbId: null,
     recipeIngredientsDbId: null
   };
@@ -478,10 +567,26 @@ export async function setupDatabases(options) {
     results.shoppingListDbId = await createShoppingListDatabase(notion, mainPageId);
   }
 
+  if (createRecipes) {
+    results.recipesDbId = await createRecipesDatabase(notion, mainPageId);
+  }
+
   if (createIngredients) {
-    const ingredientResults = await createIngredientDatabases(notion, mainPageId, recipesDbId);
-    results.ingredientsDbId = ingredientResults.ingredientsDbId;
-    results.recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+    // Use either the newly created recipe database ID or the one provided in options
+    const recipeDbForRelations = results.recipesDbId || recipesDbId;
+    if (recipeDbForRelations) {
+      const ingredientResults = await createIngredientDatabases(notion, mainPageId, recipeDbForRelations);
+      if (ingredientResults) {
+        results.ingredientsDbId = ingredientResults.ingredientsDbId;
+        results.recipeIngredientsDbId = ingredientResults.recipeIngredientsDbId;
+      }
+    } else {
+      // Create just the ingredients database without relations
+      const ingredientResults = await createIngredientDatabases(notion, mainPageId, null);
+      if (ingredientResults) {
+        results.ingredientsDbId = ingredientResults.ingredientsDbId;
+      }
+    }
   }
 
   return results;

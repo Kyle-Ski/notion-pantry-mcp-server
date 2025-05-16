@@ -481,9 +481,6 @@ export class NotionPantryService {
 
     // ====== PANTRY METHODS ======
 
-
-    // In src/services/notionPantryService.ts
-
     /**
      * Add a new recipe to the Notion recipes database
      */
@@ -513,52 +510,122 @@ export class NotionPantryService {
         }
 
         try {
+            // First, let's get the database structure to find the actual property names
+            const database = await this.notion.databases.retrieve({
+                database_id: this.recipesDbId
+            });
+
             // Create properties object for the new recipe
-            const properties: any = {
-                'Name': {
-                    title: [{
-                        text: {
-                            content: recipeData.name
-                        }
-                    }]
-                },
-                'Ingredients': {
+            const properties: any = {};
+
+            // Find the title property (this is always present)
+            const titlePropName = Object.entries(database.properties)
+                .find(([_, prop]) => (prop as any).type === 'title')?.[0] || 'Name';
+
+            properties[titlePropName] = {
+                title: [{
+                    text: {
+                        content: recipeData.name
+                    }
+                }]
+            };
+
+            // Look for properties that might store ingredients
+            const ingredientsPropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'rich_text' &&
+                    (name.toLowerCase().includes('ingredient') || name === 'Ingredients')
+                )?.[0];
+
+            if (ingredientsPropName) {
+                properties[ingredientsPropName] = {
                     rich_text: [{
                         text: {
                             content: recipeData.ingredients
                         }
                     }]
-                },
-                'Instructions': {
+                };
+            }
+
+            // Look for properties that might store instructions
+            const instructionsPropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'rich_text' &&
+                    (name.toLowerCase().includes('instruction') || name === 'Instructions' ||
+                        name.toLowerCase().includes('steps') || name.toLowerCase().includes('directions'))
+                )?.[0];
+
+            if (instructionsPropName) {
+                properties[instructionsPropName] = {
                     rich_text: [{
                         text: {
                             content: recipeData.instructions
                         }
                     }]
-                },
-                'Tried?': {
-                    checkbox: false
-                },
-                'AI Modified': {
-                    checkbox: recipeData.aiModified !== undefined ? recipeData.aiModified : true
-                }
-            };
+                };
+            }
 
-            // Add optional properties
-            if (recipeData.tags && recipeData.tags.length > 0) {
-                properties['Tags'] = {
+            // Look for tried property
+            const triedPropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'checkbox' &&
+                    (name.toLowerCase().includes('tried') || name === 'Tried?')
+                )?.[0];
+
+            if (triedPropName) {
+                properties[triedPropName] = {
+                    checkbox: false
+                };
+            }
+
+            // Look for AI Modified property
+            const aiModifiedPropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'checkbox' &&
+                    (name.toLowerCase().includes('ai') || name === 'AI Modified')
+                )?.[0];
+
+            if (aiModifiedPropName) {
+                properties[aiModifiedPropName] = {
+                    checkbox: recipeData.aiModified !== undefined ? recipeData.aiModified : true
+                };
+            }
+
+            // Look for tags property
+            const tagsPropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'multi_select' &&
+                    (name.toLowerCase().includes('tag') || name === 'Tags')
+                )?.[0];
+
+            if (tagsPropName && recipeData.tags && recipeData.tags.length > 0) {
+                properties[tagsPropName] = {
                     multi_select: recipeData.tags.map(tag => ({ name: tag }))
                 };
             }
 
-            if (recipeData.prepTime !== undefined) {
-                properties['PrepTime'] = {
+            // Look for prep time property
+            const prepTimePropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'number' &&
+                    (name.toLowerCase().includes('prep') || name === 'PrepTime')
+                )?.[0];
+
+            if (prepTimePropName && recipeData.prepTime !== undefined) {
+                properties[prepTimePropName] = {
                     number: recipeData.prepTime
                 };
             }
 
-            if (recipeData.cookTime !== undefined) {
-                properties['CookTime'] = {
+            // Look for cook time property
+            const cookTimePropName = Object.entries(database.properties)
+                .find(([name, prop]) =>
+                    (prop as any).type === 'number' &&
+                    (name.toLowerCase().includes('cook') || name === 'CookTime')
+                )?.[0];
+
+            if (cookTimePropName && recipeData.cookTime !== undefined) {
+                properties[cookTimePropName] = {
                     number: recipeData.cookTime
                 };
             }
